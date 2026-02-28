@@ -57,50 +57,52 @@ const TVPanel: React.FC = () => {
 
         // Play sound
         if (audioRef.current) {
-            audioRef.current.currentTime = 0;
-            audioRef.current.play().catch(e => console.log('Audio play failed (user interaction needed?):', e));
+          audioRef.current.currentTime = 0;
+          audioRef.current.play().catch(e => console.log('Audio play failed (user interaction needed?):', e));
         }
 
         setCurrentTicket(prev => {
-            if (prev && prev.id !== ticket.id) {
-                // Move current to history
-                setHistory(h => [prev, ...h].filter(t => t.id !== ticket.id).slice(0, 5));
-            }
-            return ticket;
+          // If it's the same ticket, do nothing
+          if (prev && prev.id === ticket.id) return prev;
+
+          // If there was a previous ticket, move it to history if it's not already there
+          if (prev) {
+            setHistory(h => {
+              const alreadyInHistory = h.some(t => t.id === prev.id);
+              if (alreadyInHistory) return h;
+              return [prev, ...h].slice(0, 5);
+            });
+          }
+          return ticket;
         });
       };
 
-
       const handleUpdated = (ticket: Ticket) => {
-          // If the current ticket is updated (e.g. started, finished), reflect that?
-          // For TV, usually we only care about "Calling". 
-          // If it goes to "in_attendance", maybe we clear it or show "Em Atendimento"?
-          // Requirements say "TV Panel shows called ticket".
-          // Let's keep showing it until a new one is called, or maybe update status text.
-          
-          setCurrentTicket(prev => {
-              if (prev && prev.id === ticket.id) {
-                  return ticket;
-              }
-              return prev;
-          });
-          
-          setHistory(prevHistory => 
-              prevHistory.map(t => t.id === ticket.id ? ticket : t)
-          );
+        // Update current ticket if it matches
+        setCurrentTicket(prev => {
+          if (prev && prev.id === ticket.id) {
+            return ticket;
+          }
+          return prev;
+        });
+
+        // Update history if it contains the ticket
+        setHistory(prevHistory => 
+          prevHistory.map(t => t.id === ticket.id ? ticket : t)
+        );
       };
 
       socketContext.on('ticket:calling', handleCalling);
       socketContext.on('ticket:started', handleUpdated);
-      socketContext.on('ticket:finished', handleUpdated); // Maybe remove from screen?
-      
+      socketContext.on('ticket:finished', handleUpdated);
+
       return () => {
         socketContext.off('ticket:calling', handleCalling);
         socketContext.off('ticket:started', handleUpdated);
         socketContext.off('ticket:finished', handleUpdated);
       };
     }
-  }, [socketContext]);
+  }, [socketContext, filterType, filterDoctor]);
 
   return (
     <div className="min-h-screen bg-gray-900 text-white overflow-hidden flex flex-col relative">

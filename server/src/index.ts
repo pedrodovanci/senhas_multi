@@ -317,12 +317,17 @@ const startServer = async () => {
           [doc.id],
         );
 
+        // Format oldest_created_at to ISO string for consistent frontend parsing
         let waitTimeStr = null;
         if (oldest) {
-          // Calculate wait time
-          // SQLite datetime is UTC or local string, assuming consistency.
-          // Client will calculate diff, but we can send created_at
-          waitTimeStr = oldest.created_at;
+          // Ensure we have a valid date object
+          const dateObj = new Date(oldest.created_at);
+          if (!isNaN(dateObj.getTime())) {
+            waitTimeStr = dateObj.toISOString();
+          } else {
+            // Fallback if parsing fails (though SQLite usually returns 'YYYY-MM-DD HH:MM:SS')
+            waitTimeStr = oldest.created_at;
+          }
         }
 
         return {

@@ -29,11 +29,13 @@ const Reception: React.FC = () => {
       const data = await res.json();
       setLastTicket(data);
       
-      // Stub for printing
-      console.log('Printing ticket:', data);
-      
-      // Auto-hide confirmation after 5 seconds
-      setTimeout(() => setLastTicket(null), 5000);
+      // Auto-print logic
+      setTimeout(() => {
+        window.print();
+        // Clear ticket after printing (optional, giving user time to see it)
+        // setTimeout(() => setLastTicket(null), 1000); 
+      }, 500);
+
     } catch (err) {
       console.error(err);
       alert('Erro ao gerar senha');
