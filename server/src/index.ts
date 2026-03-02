@@ -2,18 +2,36 @@ import express from "express";
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import cors from "cors";
+import bcrypt from "bcrypt";
 import { initDb } from "./database";
-import { ConsolePrinter, NetworkPrinter } from "./services/PrinterService";
+import {
+  generateToken,
+  verifyToken,
+  requireAdmin,
+  AuthRequest,
+} from "./middleware/auth";
+import {
+  ConsolePrinter,
+  NetworkPrinter,
+  WindowsPrinter,
+  IPrinter,
+} from "./services/PrinterService";
 
 const app = express();
 const httpServer = createServer(app);
 const wss = new WebSocketServer({ server: httpServer });
 
-// Use NetworkPrinter if env var is set, otherwise ConsolePrinter
+// Initialize Printer
 const printerHost = process.env.PRINTER_HOST;
-const printer = printerHost
-  ? new NetworkPrinter(printerHost)
-  : new ConsolePrinter();
+let printer: IPrinter;
+
+if (printerHost) {
+  printer = new NetworkPrinter(printerHost);
+} else if (process.platform === "win32") {
+  printer = new WindowsPrinter();
+} else {
+  printer = new ConsolePrinter();
+}
 
 app.use(cors());
 app.use(express.json());
@@ -31,6 +49,40 @@ const broadcast = (type: string, data: any) => {
 const startServer = async () => {
   const db = await initDb();
 
+  // Startup Cleanup: Reset stuck tickets
+  const stuckTickets = await db.all(
+    `SELECT id, number, status FROM tickets 
+     WHERE status IN ('calling', 'in_attendance')
+     AND date(created_at) = date('now')`,
+  );
+
+  if (stuckTickets.length > 0) {
+    console.log(
+      `[Startup] Found ${stuckTickets.length} stuck tickets. Returning to queue...`,
+    );
+
+    await db.run(
+      `UPDATE tickets 
+       SET status = 'waiting',
+           workstation_id = NULL,
+           called_by_user_id = NULL,
+           called_at = NULL,
+           started_at = NULL
+       WHERE status IN ('calling', 'in_attendance')
+       AND date(created_at) = date('now')`,
+    );
+
+    stuckTickets.forEach((t) => {
+      console.log(
+        `[Startup] Ticket ${t.number} (${t.status}) returned to 'waiting'.`,
+      );
+    });
+  }
+
+  // Release locked workstations
+  await db.run(`UPDATE workstations SET current_user_id = NULL, is_active = 0`);
+  console.log("[Startup] Workstations released.");
+
   // --- API Routes ---
 
   // Login
@@ -38,15 +90,26 @@ const startServer = async () => {
     const { username, password, workstation_id } = req.body;
 
     // Find user
-    const user = await db.get(
-      "SELECT * FROM users WHERE username = ? AND password = ?",
-      [username, password],
-    );
+    const user = await db.get("SELECT * FROM users WHERE username = ?", [
+      username,
+    ]);
+
     if (!user) {
       return res
         .status(401)
         .json({ success: false, message: "Credenciais inválidas" });
     }
+
+    // Compare password
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Credenciais inválidas" });
+    }
+
+    // Generate Token
+    const token = generateToken(user);
 
     // If workstation provided, check lock
     if (workstation_id) {
@@ -85,6 +148,7 @@ const startServer = async () => {
 
     res.json({
       success: true,
+      token,
       user: { id: user.id, username: user.username, role: user.role },
     });
   });
@@ -132,6 +196,113 @@ const startServer = async () => {
     res.json(doctors);
   });
 
+  // Create Doctor
+  app.post("/api/doctors", verifyToken, requireAdmin, async (req, res) => {
+    const { name, specialization } = req.body;
+    try {
+      const result = await db.run(
+        "INSERT INTO doctors (name, specialization) VALUES (?, ?)",
+        [name, specialization],
+      );
+      const newDoctor = await db.get("SELECT * FROM doctors WHERE id = ?", [
+        result.lastID,
+      ]);
+      res.json(newDoctor);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Update Doctor
+  app.put("/api/doctors/:id", verifyToken, requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const { name, specialization } = req.body;
+    try {
+      await db.run(
+        "UPDATE doctors SET name = ?, specialization = ? WHERE id = ?",
+        [name, specialization, id],
+      );
+      res.json({ id, name, specialization });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Delete Doctor
+  app.delete(
+    "/api/doctors/:id",
+    verifyToken,
+    requireAdmin,
+    async (req, res) => {
+      const { id } = req.params;
+      try {
+        await db.run("DELETE FROM doctors WHERE id = ?", [id]);
+        res.json({ message: "Deleted" });
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    },
+  );
+
+  // Users
+  app.get("/api/users", verifyToken, requireAdmin, async (req, res) => {
+    const users = await db.all("SELECT id, username, role, active FROM users");
+    res.json(users);
+  });
+
+  // Create User
+  app.post("/api/users", verifyToken, requireAdmin, async (req, res) => {
+    const { username, password, role } = req.body;
+    try {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const result = await db.run(
+        "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+        [username, hashedPassword, role],
+      );
+      const newUser = await db.get(
+        "SELECT id, username, role, active FROM users WHERE id = ?",
+        [result.lastID],
+      );
+      res.json(newUser);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Update User
+  app.put("/api/users/:id", verifyToken, requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const { username, password, role, active } = req.body;
+    try {
+      if (password && password.trim() !== "") {
+        const hashedPassword = await bcrypt.hash(password, 10);
+        await db.run(
+          "UPDATE users SET username = ?, password = ?, role = ?, active = ? WHERE id = ?",
+          [username, hashedPassword, role, active, id],
+        );
+      } else {
+        await db.run(
+          "UPDATE users SET username = ?, role = ?, active = ? WHERE id = ?",
+          [username, role, active, id],
+        );
+      }
+      res.json({ id, username, role, active });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Delete User
+  app.delete("/api/users/:id", verifyToken, requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    try {
+      await db.run("DELETE FROM users WHERE id = ?", [id]);
+      res.json({ message: "Deleted" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Tickets List
   app.get("/api/tickets", async (req, res) => {
     const { status } = req.query;
@@ -142,18 +313,25 @@ const startServer = async () => {
       LEFT JOIN workstations w ON t.workstation_id = w.id
     `;
 
+    const params: any[] = [];
+
+    // Always filter by today's date for operational views
+    // Use /api/tickets/history for historical data
+    query += " WHERE date(t.created_at) = date('now')";
+
     if (status) {
-      query += ` WHERE t.status = '${status}'`;
+      query += " AND t.status = ?";
+      params.push(status);
     }
 
     query += " ORDER BY t.created_at ASC";
 
-    const tickets = await db.all(query);
+    const tickets = await db.all(query, params);
     res.json(tickets);
   });
 
   // Create Ticket
-  app.post("/api/tickets", async (req, res) => {
+  app.post("/api/tickets", verifyToken, async (req, res) => {
     const { doctor_id, type } = req.body; // type: 'consulta' | 'cirurgia'
 
     // Determine prefix based on type
@@ -184,13 +362,15 @@ const startServer = async () => {
     broadcast("ticket:created", newTicket);
 
     // Print ticket
+    let printError = null;
     try {
       await printer.printTicket(newTicket);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to print ticket:", err);
+      printError = "Falha ao imprimir: " + (err.message || "Erro desconhecido");
     }
 
-    res.json(newTicket);
+    res.json({ ...newTicket, printError });
   });
 
   // Get History (Last 10 called tickets)
@@ -207,11 +387,14 @@ const startServer = async () => {
         ORDER BY t.called_at DESC
     `;
 
+    const params: any[] = [];
+
     if (limit) {
-      query += ` LIMIT ${limit}`;
+      query += " LIMIT ?";
+      params.push(limit);
     }
 
-    const history = await db.all(query);
+    const history = await db.all(query, params);
     res.json(history);
   });
 
@@ -229,7 +412,7 @@ const startServer = async () => {
   });
 
   // Requeue Ticket
-  app.post("/api/tickets/:id/requeue", async (req, res) => {
+  app.post("/api/tickets/:id/requeue", verifyToken, async (req, res) => {
     const { id } = req.params;
 
     const ticket = await db.get("SELECT * FROM tickets WHERE id = ?", [id]);
@@ -284,7 +467,7 @@ const startServer = async () => {
   });
 
   // Recall Ticket
-  app.post("/api/tickets/:id/recall", async (req, res) => {
+  app.post("/api/tickets/:id/recall", verifyToken, async (req, res) => {
     const { id } = req.params;
     const ticket = await db.get("SELECT * FROM tickets WHERE id = ?", [id]);
 
@@ -320,13 +503,19 @@ const startServer = async () => {
         // Format oldest_created_at to ISO string for consistent frontend parsing
         let waitTimeStr = null;
         if (oldest) {
-          // Ensure we have a valid date object
-          const dateObj = new Date(oldest.created_at);
-          if (!isNaN(dateObj.getTime())) {
-            waitTimeStr = dateObj.toISOString();
+          // SQLite CURRENT_TIMESTAMP is 'YYYY-MM-DD HH:MM:SS' (UTC)
+          // We convert it to ISO 8601 'YYYY-MM-DDTHH:MM:SS.000Z'
+          const raw = oldest.created_at;
+          if (raw && typeof raw === "string") {
+            // Check if it already looks like ISO (has T)
+            if (raw.includes("T")) {
+              waitTimeStr = raw; // Already ISO-ish
+            } else {
+              // Assume 'YYYY-MM-DD HH:MM:SS' -> 'YYYY-MM-DDTHH:MM:SS.000Z'
+              waitTimeStr = raw.replace(" ", "T") + ".000Z";
+            }
           } else {
-            // Fallback if parsing fails (though SQLite usually returns 'YYYY-MM-DD HH:MM:SS')
-            waitTimeStr = oldest.created_at;
+            waitTimeStr = raw;
           }
         }
 
@@ -359,110 +548,161 @@ const startServer = async () => {
   });
 
   // Call Next Ticket (FIFO)
-  app.post("/api/tickets/call-next", async (req, res) => {
+  app.post("/api/tickets/call-next", verifyToken, async (req, res) => {
     const { workstation_id, user_id, doctor_id } = req.body;
 
-    let query = 'SELECT * FROM tickets WHERE status = "waiting"';
-    const params = [];
+    try {
+      await db.run("BEGIN IMMEDIATE"); // Locks db for writing
 
-    if (doctor_id !== undefined) {
-      if (doctor_id === null) {
-        query += " AND doctor_id IS NULL";
-      } else {
-        query += " AND doctor_id = ?";
-        params.push(doctor_id);
+      let query =
+        'SELECT * FROM tickets WHERE status = "waiting" AND date(created_at) = date("now")';
+      const params: any[] = [];
+
+      if (doctor_id !== undefined) {
+        if (doctor_id === null) {
+          query += " AND doctor_id IS NULL";
+        } else {
+          query += " AND doctor_id = ?";
+          params.push(doctor_id);
+        }
       }
+
+      query += " ORDER BY created_at ASC LIMIT 1";
+
+      const ticket = await db.get(query, params);
+
+      if (!ticket) {
+        await db.run("ROLLBACK");
+        return res.status(404).json({ message: "Nenhuma senha aguardando." });
+      }
+
+      // Update ticket
+      const result = await db.run(
+        `
+          UPDATE tickets 
+          SET status = 'calling', 
+              workstation_id = ?, 
+              called_by_user_id = ?, 
+              called_at = CURRENT_TIMESTAMP,
+              call_type = 'FIFO'
+          WHERE id = ? AND status = 'waiting'
+        `,
+        [workstation_id, user_id, ticket.id],
+      );
+
+      if (result.changes === 0) {
+        await db.run("ROLLBACK");
+        return res
+          .status(409)
+          .json({ message: "Senha já foi chamada por outro atendente." });
+      }
+
+      await db.run("COMMIT");
+
+      const updatedTicket = await db.get(
+        `
+          SELECT t.*, d.name as doctor_name, w.name as workstation_name, w.code as workstation_code
+          FROM tickets t 
+          LEFT JOIN doctors d ON t.doctor_id = d.id 
+          LEFT JOIN workstations w ON t.workstation_id = w.id
+          WHERE t.id = ?
+        `,
+        ticket.id,
+      );
+
+      if (!updatedTicket) {
+        throw new Error("Erro ao recuperar senha atualizada (call-next)");
+      }
+
+      broadcast("ticket:calling", updatedTicket);
+      res.json(updatedTicket);
+    } catch (err: any) {
+      await db.run("ROLLBACK").catch(() => {});
+      console.error("call-next error:", err);
+      res
+        .status(500)
+        .json({ message: "Erro ao chamar senha. Tente novamente." });
     }
-
-    query += " ORDER BY created_at ASC LIMIT 1";
-
-    // Find oldest waiting ticket
-    const ticket = await db.get(query, params);
-
-    if (!ticket) {
-      return res.status(404).json({ message: "Nenhuma senha aguardando." });
-    }
-
-    // Update ticket
-    await db.run(
-      `
-        UPDATE tickets 
-        SET status = 'calling', 
-            workstation_id = ?, 
-            called_by_user_id = ?, 
-            called_at = CURRENT_TIMESTAMP,
-            call_type = 'FIFO'
-        WHERE id = ?
-      `,
-      [workstation_id, user_id, ticket.id],
-    );
-
-    const updatedTicket = await db.get(
-      `
-        SELECT t.*, d.name as doctor_name, w.name as workstation_name, w.code as workstation_code
-        FROM tickets t 
-        LEFT JOIN doctors d ON t.doctor_id = d.id 
-        LEFT JOIN workstations w ON t.workstation_id = w.id
-        WHERE t.id = ?
-      `,
-      ticket.id,
-    );
-
-    broadcast("ticket:calling", updatedTicket);
-    res.json(updatedTicket);
   });
 
   // Call Specific Ticket
-  app.post("/api/tickets/call-specific", async (req, res) => {
+  app.post("/api/tickets/call-specific", verifyToken, async (req, res) => {
     const { workstation_id, user_id, ticket_id } = req.body;
-
-    const ticket = await db.get(
-      'SELECT * FROM tickets WHERE id = ? AND status = "waiting"',
-      [ticket_id],
+    console.log(
+      `[call-specific] Request: workstation_id=${workstation_id}, user_id=${user_id}, ticket_id=${ticket_id}`,
     );
 
-    if (!ticket) {
-      return res
-        .status(404)
-        .json({ message: "Senha não encontrada ou não está aguardando." });
+    try {
+      await db.run("BEGIN IMMEDIATE");
+
+      const ticket = await db.get(
+        'SELECT * FROM tickets WHERE id = ? AND status = "waiting" AND date(created_at) = date("now")',
+        [ticket_id],
+      );
+
+      if (!ticket) {
+        await db.run("ROLLBACK");
+        return res
+          .status(404)
+          .json({ message: "Senha não encontrada ou já foi chamada." });
+      }
+
+      // Update ticket
+      const result = await db.run(
+        `
+          UPDATE tickets 
+          SET status = 'calling', 
+              workstation_id = ?, 
+              called_by_user_id = ?, 
+              called_at = CURRENT_TIMESTAMP,
+              is_specific_call = 1
+          WHERE id = ? AND status = 'waiting'
+        `,
+        [workstation_id, user_id, ticket_id],
+      );
+
+      if (result.changes === 0) {
+        await db.run("ROLLBACK");
+        return res
+          .status(409)
+          .json({ message: "Senha já foi chamada por outro atendente." });
+      }
+
+      await db.run("COMMIT");
+
+      const updatedTicket = await db.get(
+        `
+          SELECT t.*, d.name as doctor_name, w.name as workstation_name, w.code as workstation_code
+          FROM tickets t 
+          LEFT JOIN doctors d ON t.doctor_id = d.id 
+          LEFT JOIN workstations w ON t.workstation_id = w.id
+          WHERE t.id = ?
+        `,
+        [ticket_id],
+      );
+
+      if (!updatedTicket) {
+        throw new Error("Erro ao recuperar senha atualizada");
+      }
+
+      broadcast("ticket:calling", updatedTicket);
+      res.json(updatedTicket);
+    } catch (err: any) {
+      await db.run("ROLLBACK").catch(() => {});
+      console.error("call-specific error:", err);
+      res
+        .status(500)
+        .json({ message: "Erro ao chamar senha. Tente novamente." });
     }
-
-    // Update ticket
-    await db.run(
-      `
-        UPDATE tickets 
-        SET status = 'calling', 
-            workstation_id = ?, 
-            called_by_user_id = ?, 
-            called_at = CURRENT_TIMESTAMP,
-            is_specific_call = 1
-        WHERE id = ?
-      `,
-      [workstation_id, user_id, ticket_id],
-    );
-
-    const updatedTicket = await db.get(
-      `
-        SELECT t.*, d.name as doctor_name, w.name as workstation_name, w.code as workstation_code
-        FROM tickets t 
-        LEFT JOIN doctors d ON t.doctor_id = d.id 
-        LEFT JOIN workstations w ON t.workstation_id = w.id
-        WHERE t.id = ?
-      `,
-      [ticket_id],
-    );
-
-    broadcast("ticket:calling", updatedTicket);
-    res.json(updatedTicket);
   });
 
   // Call Random Ticket
-  app.post("/api/tickets/call-random", async (req, res) => {
+  app.post("/api/tickets/call-random", verifyToken, async (req, res) => {
     const { workstation_id, user_id } = req.body;
 
     // Find ALL waiting tickets
     const tickets = await db.all(
-      'SELECT * FROM tickets WHERE status = "waiting"',
+      'SELECT * FROM tickets WHERE status = "waiting" AND date(created_at) = date("now")',
     );
 
     if (tickets.length === 0) {
@@ -502,7 +742,7 @@ const startServer = async () => {
   });
 
   // Update Ticket Status (Start, Finish, Missed)
-  app.put("/api/tickets/:id/status", async (req, res) => {
+  app.put("/api/tickets/:id/status", verifyToken, async (req, res) => {
     const { id } = req.params;
     const { status } = req.body; // 'in_attendance', 'finished', 'missed'
 
@@ -547,7 +787,7 @@ const startServer = async () => {
   });
 
   // Dashboard Stats
-  app.get("/api/stats", async (req, res) => {
+  app.get("/api/stats", verifyToken, requireAdmin, async (req, res) => {
     const today = new Date().toISOString().split("T")[0];
 
     const totalTickets = await db.get(

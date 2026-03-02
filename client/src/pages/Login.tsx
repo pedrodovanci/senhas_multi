@@ -31,8 +31,11 @@ const Login: React.FC = () => {
       
       if (data.success) {
         const selectedWs = workstations.find(ws => ws.id === Number(workstationId));
-        login(data.user, selectedWs);
-        if (data.user.role === 'admin') {
+        login(data.user, data.token, selectedWs);
+        
+        if (selectedWs?.code === 'RET01') {
+            navigate('/recepcao/consultas');
+        } else if (data.user.role === 'admin') {
             navigate('/admin');
         } else {
             navigate('/atendente');

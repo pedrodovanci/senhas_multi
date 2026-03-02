@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { BaseModal } from "./BaseModal";
 import type { Ticket } from "../types";
 import { useToast } from "../contexts/ToastContext";
+import { useAuth } from "../contexts/AuthContext";
 import { RotateCcw, AlertCircle } from "lucide-react";
 
 interface RequeueModalProps {
@@ -16,6 +17,7 @@ export const RequeueModal: React.FC<RequeueModalProps> = ({
   refreshTrigger,
 }) => {
   const { addToast } = useToast();
+  const { token } = useAuth();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(false);
   const [confirmTicket, setConfirmTicket] = useState<Ticket | null>(null);
@@ -72,6 +74,9 @@ export const RequeueModal: React.FC<RequeueModalProps> = ({
         `http://localhost:3000/api/tickets/${confirmTicket.id}/requeue`,
         {
           method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
         },
       );
 

@@ -60,7 +60,7 @@ const TicketTimer: React.FC<{ startTime: string }> = ({ startTime }) => {
 };
 
 const Attendant: React.FC = () => {
-  const { user, workstation, logout } = useAuth();
+  const { user, workstation, token, logout } = useAuth();
   const socketContext = useSocket();
   const navigate = useNavigate();
 
@@ -75,7 +75,7 @@ const Attendant: React.FC = () => {
   const [isRequeueOpen, setIsRequeueOpen] = useState(false);
 
   useEffect(() => {
-    if (!user) navigate("/login");
+    if (!user || !token) navigate("/login");
 
     // Initial fetch
     fetchData();
@@ -156,6 +156,9 @@ const Attendant: React.FC = () => {
     try {
       const ticketsRes = await fetch(
         "http://localhost:3000/api/tickets?status=waiting",
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
       );
       const ticketsData = await ticketsRes.json();
       if (Array.isArray(ticketsData)) {
@@ -165,7 +168,9 @@ const Attendant: React.FC = () => {
         setTickets([]);
       }
 
-      const myActiveRes = await fetch(`http://localhost:3000/api/tickets`); // Get all to find mine
+      const myActiveRes = await fetch(`http://localhost:3000/api/tickets`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }); // Get all to find mine
       const allTickets = await myActiveRes.json();
 
       if (Array.isArray(allTickets)) {
@@ -194,7 +199,10 @@ const Attendant: React.FC = () => {
     try {
       const res = await fetch("http://localhost:3000/api/tickets/call-next", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           workstation_id: workstation?.id,
           user_id: user?.id,
@@ -224,13 +232,23 @@ const Attendant: React.FC = () => {
       return;
     }
 
+    if (!workstation || !user) {
+      alert(
+        "Erro de sessão: Guichê ou Usuário não identificados. Tente recarregar a página.",
+      );
+      return;
+    }
+
     setLoading(true);
     try {
       const res = await fetch(
         "http://localhost:3000/api/tickets/call-specific",
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
           body: JSON.stringify({
             workstation_id: workstation?.id,
             user_id: user?.id,
@@ -264,6 +282,7 @@ const Attendant: React.FC = () => {
         `http://localhost:3000/api/tickets/${currentTicket.id}/recall`,
         {
           method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
         },
       );
 
@@ -289,7 +308,10 @@ const Attendant: React.FC = () => {
         `http://localhost:3000/api/tickets/${currentTicket.id}/status`,
         {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
           body: JSON.stringify({ status }),
         },
       );

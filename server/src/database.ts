@@ -1,11 +1,17 @@
 import sqlite3 from "sqlite3";
 import { open } from "sqlite";
+import bcrypt from "bcrypt";
 
 export const initDb = async () => {
   const db = await open({
     filename: "./database.sqlite",
     driver: sqlite3.Database,
   });
+
+  // Performance and Safety settings
+  await db.run("PRAGMA journal_mode = WAL"); // Allows simultaneous readers during writers
+  await db.run("PRAGMA busy_timeout = 5000"); // Wait up to 5s if locked
+  await db.run("PRAGMA synchronous = NORMAL"); // Balance between safety and performance
 
   // Recreate tables to ensure schema compliance with the new plan
   await db.exec(`
@@ -69,30 +75,38 @@ export const initDb = async () => {
 
     try {
         await db.run("ALTER TABLE tickets ADD COLUMN is_specific_call BOOLEAN DEFAULT 0");
-    } catch (e) {
-        // Column probably exists
+        console.log("Migration: Added is_specific_call column");
+    } catch (e: any) {
+        if (!e.message.includes("duplicate column")) {
+            console.error("Migration error (is_specific_call):", e);
+        }
     }
   `);
 
   // Seed initial data if empty
   const userCount = await db.get("SELECT count(*) as count FROM users");
   if (userCount.count === 0) {
+    const adminHash = await bcrypt.hash("admin", 10);
+    const attendantHash = await bcrypt.hash("1234", 10);
+
     await db.exec(`
-      INSERT INTO users (username, password, role) VALUES ('admin', 'admin', 'admin');
-      INSERT INTO users (username, password, role) VALUES ('atendente1', '1234', 'attendant');
-      INSERT INTO users (username, password, role) VALUES ('atendente2', '1234', 'attendant');
+      INSERT INTO users (username, password, role) VALUES ('admin', '${adminHash}', 'admin');
+      INSERT INTO users (username, password, role) VALUES ('atendente1', '${attendantHash}', 'attendant');
+      INSERT INTO users (username, password, role) VALUES ('atendente2', '${attendantHash}', 'attendant');
     `);
   }
 
-  // Ensure test user exists
-  const testUser = await db.get(
-    "SELECT * FROM users WHERE username = 'atendente'",
-  );
-  if (!testUser) {
-    await db.run(
-      "INSERT INTO users (username, password, role) VALUES ('atendente', '123456', 'attendant')",
-    );
-    console.log("Test user 'atendente' created.");
+  // Migration: Hash existing plain text passwords
+  const users = await db.all("SELECT * FROM users");
+  for (const user of users) {
+    if (!user.password.startsWith("$2b$")) {
+      const hashedPassword = await bcrypt.hash(user.password, 10);
+      await db.run("UPDATE users SET password = ? WHERE id = ?", [
+        hashedPassword,
+        user.id,
+      ]);
+      console.log(`Migrated password for user ${user.username}`);
+    }
   }
 
   const wsCount = await db.get("SELECT count(*) as count FROM workstations");

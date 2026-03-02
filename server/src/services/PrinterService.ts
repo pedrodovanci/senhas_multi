@@ -1,4 +1,8 @@
 import { Socket } from 'net';
+import { exec } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
 export interface IPrinter {
   printTicket(ticket: any): Promise<void>;
@@ -16,6 +20,45 @@ export class ConsolePrinter implements IPrinter {
     console.log('--------------------------------');
     console.log('Aguarde ser chamado no painel.');
     console.log('--------------------------------');
+  }
+}
+
+export class WindowsPrinter implements IPrinter {
+  async printTicket(ticket: any): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const text = `
+CENTRO DO CEREBRO E COLUNA
+--------------------------------
+SENHA: ${ticket.number}
+TIPO:  ${ticket.type.toUpperCase()}
+DATA:  ${new Date().toLocaleString()}
+--------------------------------
+Aguarde ser chamado no painel.
+--------------------------------
+      `;
+      const tempPath = path.join(os.tmpdir(), `ticket-${ticket.number}.txt`);
+      
+      try {
+        fs.writeFileSync(tempPath, text);
+        
+        // Use PowerShell to print to default printer
+        const command = `powershell -Command "Get-Content '${tempPath}' | Out-Printer"`;
+        
+        exec(command, (error, stdout, stderr) => {
+          // Cleanup
+          try { fs.unlinkSync(tempPath); } catch (e) {}
+
+          if (error) {
+            console.error('Windows print error:', error);
+            reject(error);
+          } else {
+            resolve();
+          }
+        });
+      } catch (err) {
+        reject(err);
+      }
+    });
   }
 }
 

@@ -62,7 +62,9 @@ const App: React.FC = () => {
       <ToastProvider>
         <AuthProvider>
           <SocketProvider>
-            <BrowserRouter>
+            <BrowserRouter
+              future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+            >
               <Routes>
                 <Route path="/login" element={<Login />} />
                 <Route path="/recepcao/consultas" element={<Reception />} />

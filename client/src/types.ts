@@ -2,6 +2,7 @@ export interface User {
   id: number;
   username: string;
   role: "admin" | "attendant";
+  active?: boolean;
 }
 
 export interface Workstation {
@@ -36,4 +37,5 @@ export interface Ticket {
   doctor_name?: string;
   workstation_name?: string;
   workstation_code?: string;
+  printError?: string;
 }
