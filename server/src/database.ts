@@ -120,6 +120,15 @@ export const initDb = async () => {
     }
   }
 
+  // Ensure RET01 exists (Retirada de Senhas)
+  const ret01 = await db.get("SELECT * FROM workstations WHERE code = 'RET01'");
+  if (!ret01) {
+    await db.run(
+      "INSERT INTO workstations (code, name) VALUES ('RET01', 'Retirada de Senhas')",
+    );
+    console.log("Created special workstation: RET01 (Retirada de Senhas)");
+  }
+
   const docCount = await db.get("SELECT count(*) as count FROM doctors");
   if (docCount.count === 0) {
     await db.exec(`
