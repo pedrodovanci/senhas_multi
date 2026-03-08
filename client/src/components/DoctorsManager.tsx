@@ -3,6 +3,7 @@ import type { Doctor } from "../types";
 import { BaseModal } from "./BaseModal";
 import { Edit, Trash, Plus } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
+import { API_URL } from "../config";
 
 export const DoctorsManager: React.FC = () => {
   const { token } = useAuth();
@@ -18,7 +19,7 @@ export const DoctorsManager: React.FC = () => {
 
   const fetchDoctors = async () => {
     try {
-      const res = await fetch("http://localhost:3000/api/doctors", {
+      const res = await fetch(`${API_URL}/api/doctors`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -33,7 +34,7 @@ export const DoctorsManager: React.FC = () => {
     setLoading(true);
     try {
       if (editingDoctor) {
-        await fetch(`http://localhost:3000/api/doctors/${editingDoctor.id}`, {
+        await fetch(`${API_URL}/api/doctors/${editingDoctor.id}`, {
           method: "PUT",
           headers: { 
             "Content-Type": "application/json",
@@ -42,7 +43,7 @@ export const DoctorsManager: React.FC = () => {
           body: JSON.stringify(formData),
         });
       } else {
-        await fetch("http://localhost:3000/api/doctors", {
+        await fetch(`${API_URL}/api/doctors`, {
           method: "POST",
           headers: { 
             "Content-Type": "application/json",
@@ -64,7 +65,7 @@ export const DoctorsManager: React.FC = () => {
   const handleDelete = async (id: number) => {
     if (!confirm("Tem certeza que deseja excluir este médico?")) return;
     try {
-      await fetch(`http://localhost:3000/api/doctors/${id}`, {
+      await fetch(`${API_URL}/api/doctors/${id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` }
       });

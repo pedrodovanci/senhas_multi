@@ -46,7 +46,7 @@ const broadcast = (type: string, data: any) => {
   });
 };
 
-const startServer = async () => {
+const startServer = async (listen: boolean = true) => {
   const db = await initDb();
 
   // Startup Cleanup: Reset stuck tickets
@@ -146,6 +146,60 @@ const startServer = async () => {
       });
     }
 
+    res.json({
+      success: true,
+      token,
+      user: { id: user.id, username: user.username, role: user.role },
+    });
+  });
+
+  app.post("/api/totem-login", async (req, res) => {
+    const { workstation_id } = req.body;
+
+    if (!workstation_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Posto de trabalho obrigatório",
+      });
+    }
+
+    const user = await db.get("SELECT * FROM users WHERE username = 'totem'");
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Usuário totem não encontrado",
+      });
+    }
+
+    const workstation = await db.get(
+      "SELECT * FROM workstations WHERE id = ?",
+      [workstation_id],
+    );
+    if (!workstation) {
+      return res.status(404).json({
+        success: false,
+        message: "Posto de trabalho não encontrado",
+      });
+    }
+
+    if (workstation.current_user_id && workstation.current_user_id !== user.id) {
+      return res.status(409).json({
+        success: false,
+        message: "Este posto de trabalho já está ocupado por outro usuário.",
+      });
+    }
+
+    await db.run(
+      "UPDATE workstations SET current_user_id = ?, is_active = 1 WHERE id = ?",
+      [user.id, workstation_id],
+    );
+    broadcast("workstation:updated", {
+      id: workstation.id,
+      current_user_id: user.id,
+      is_active: 1,
+    });
+
+    const token = generateToken(user);
     res.json({
       success: true,
       token,
@@ -305,7 +359,7 @@ const startServer = async () => {
 
   // Tickets List
   app.get("/api/tickets", async (req, res) => {
-    const { status } = req.query;
+    const { status, queue_sector } = req.query;
     let query = `
       SELECT t.*, d.name as doctor_name, w.name as workstation_name, w.code as workstation_code
       FROM tickets t 
@@ -324,6 +378,11 @@ const startServer = async () => {
       params.push(status);
     }
 
+    if (queue_sector) {
+      query += " AND t.queue_sector = ?";
+      params.push(queue_sector);
+    }
+
     query += " ORDER BY t.created_at ASC";
 
     const tickets = await db.all(query, params);
@@ -332,50 +391,70 @@ const startServer = async () => {
 
   // Create Ticket
   app.post("/api/tickets", verifyToken, async (req, res) => {
-    const { doctor_id, type } = req.body; // type: 'consulta' | 'cirurgia'
+    const { doctor_id, type, subtype } = req.body; // type: 'consulta' | 'outros'
+    // subtype (optional): 'agendamento_cirurgico' | 'apoio'
 
     // Determine prefix based on type
-    const prefix = type === "cirurgia" ? "S" : "C";
+    let prefix = type === "outros" ? "O" : "C";
 
-    // Get count for today to generate sequential number
-    const countResult = await db.get(
-      'SELECT count(*) as count FROM tickets WHERE date(created_at) = date("now")',
-    );
-    const nextNum = (countResult?.count || 0) + 1;
-    const ticketNumber = `${prefix}${String(nextNum).padStart(3, "0")}`;
-
-    const result = await db.run(
-      "INSERT INTO tickets (number, doctor_id, type, status) VALUES (?, ?, ?, ?)",
-      [ticketNumber, doctor_id, type || "consulta", "waiting"],
-    );
-
-    const newTicket = await db.get(
-      `
-      SELECT t.*, d.name as doctor_name 
-      FROM tickets t 
-      LEFT JOIN doctors d ON t.doctor_id = d.id 
-      WHERE t.id = ?
-    `,
-      result.lastID,
-    );
-
-    broadcast("ticket:created", newTicket);
-
-    // Print ticket
-    let printError = null;
-    try {
-      await printer.printTicket(newTicket);
-    } catch (err: any) {
-      console.error("Failed to print ticket:", err);
-      printError = "Falha ao imprimir: " + (err.message || "Erro desconhecido");
+    if (subtype === "apoio") {
+      prefix = "AP";
     }
 
-    res.json({ ...newTicket, printError });
+    if (subtype === "agendamento_cirurgico") {
+      prefix = "AC";
+    }
+
+    const queue_sector = subtype === "agendamento_cirurgico" ? "cirurgia" : "recepcao";
+
+    try {
+      await db.run("BEGIN IMMEDIATE");
+
+      const countResult = await db.get(
+        'SELECT count(*) as count FROM tickets WHERE date(created_at) = date("now")',
+      );
+      const nextNum = (countResult?.count || 0) + 1;
+      const ticketNumber = `${prefix}${String(nextNum).padStart(3, "0")}`;
+
+      const result = await db.run(
+        "INSERT INTO tickets (number, doctor_id, type, subtype, queue_sector, status) VALUES (?, ?, ?, ?, ?, ?)",
+        [ticketNumber, doctor_id || null, type || "consulta", subtype || null, queue_sector, "waiting"],
+      );
+
+      await db.run("COMMIT");
+
+      const newTicket = await db.get(
+        `
+        SELECT t.*, d.name as doctor_name 
+        FROM tickets t 
+        LEFT JOIN doctors d ON t.doctor_id = d.id 
+        WHERE t.id = ?
+      `,
+        result.lastID,
+      );
+
+      broadcast("ticket:created", newTicket);
+
+      // Print ticket
+      let printError = null;
+      try {
+        await printer.printTicket(newTicket);
+      } catch (err: any) {
+        console.error("Failed to print ticket:", err);
+        printError = "Falha ao imprimir: " + (err.message || "Erro desconhecido");
+      }
+
+      res.json({ ...newTicket, printError });
+    } catch (err: any) {
+      await db.run("ROLLBACK").catch(() => {});
+      console.error("Error creating ticket:", err);
+      res.status(500).json({ message: "Failed to create ticket", error: err.message });
+    }
   });
 
   // Get History (Last 10 called tickets)
   app.get("/api/tickets/history", async (req, res) => {
-    const { limit } = req.query;
+    const { limit, queue_sector } = req.query;
     let query = `
         SELECT t.*, d.name as doctor_name, w.code as workstation_code
         FROM tickets t
@@ -384,10 +463,16 @@ const startServer = async () => {
         WHERE t.status IN ('calling', 'in_attendance', 'finished', 'missed') 
         AND t.called_at IS NOT NULL
         AND date(t.created_at) = date("now")
-        ORDER BY t.called_at DESC
     `;
 
     const params: any[] = [];
+
+    if (queue_sector) {
+      query += " AND t.queue_sector = ?";
+      params.push(queue_sector);
+    }
+
+    query += " ORDER BY t.called_at DESC";
 
     if (limit) {
       query += " LIMIT ?";
@@ -400,14 +485,24 @@ const startServer = async () => {
 
   // Get No-Show Tickets (Missed)
   app.get("/api/tickets/no-show", async (req, res) => {
-    const missed = await db.all(`
+    const { queue_sector } = req.query;
+    let query = `
         SELECT t.*, d.name as doctor_name
         FROM tickets t
         LEFT JOIN doctors d ON t.doctor_id = d.id
         WHERE t.status = 'missed' 
         AND date(t.created_at) = date("now")
-        ORDER BY t.finished_at DESC
-    `);
+    `;
+    const params: any[] = [];
+
+    if (queue_sector) {
+      query += " AND t.queue_sector = ?";
+      params.push(queue_sector);
+    }
+
+    query += " ORDER BY t.finished_at DESC";
+
+    const missed = await db.all(query, params);
     res.json(missed);
   });
 
@@ -482,6 +577,9 @@ const startServer = async () => {
 
   // Get Waiting Stats by Doctor
   app.get("/api/tickets/waiting-stats", async (req, res) => {
+    const { queue_sector } = req.query;
+    const sectorValue = typeof queue_sector === "string" ? queue_sector : "recepcao";
+
     // Get all doctors first
     const doctors = await db.all("SELECT * FROM doctors");
 
@@ -490,14 +588,14 @@ const startServer = async () => {
       doctors.map(async (doc) => {
         // Waiting count for this doctor
         const waitingCount = await db.get(
-          'SELECT count(*) as count FROM tickets WHERE status = "waiting" AND doctor_id = ? AND date(created_at) = date("now")',
-          [doc.id],
+          `SELECT count(*) as count FROM tickets WHERE status = "waiting" AND doctor_id = ? AND date(created_at) = date("now") AND queue_sector = ?`,
+          [doc.id, sectorValue],
         );
 
         // Oldest waiting ticket
         const oldest = await db.get(
-          'SELECT created_at FROM tickets WHERE status = "waiting" AND doctor_id = ? AND date(created_at) = date("now") ORDER BY created_at ASC LIMIT 1',
-          [doc.id],
+          `SELECT created_at FROM tickets WHERE status = "waiting" AND doctor_id = ? AND date(created_at) = date("now") AND queue_sector = ? ORDER BY created_at ASC LIMIT 1`,
+          [doc.id, sectorValue],
         );
 
         // Format oldest_created_at to ISO string for consistent frontend parsing
@@ -530,17 +628,34 @@ const startServer = async () => {
 
     // Also get "No Doctor" / "Support" queue if any tickets have null doctor_id
     const supportCount = await db.get(
-      'SELECT count(*) as count FROM tickets WHERE status = "waiting" AND doctor_id IS NULL AND date(created_at) = date("now")',
+      `SELECT count(*) as count FROM tickets WHERE status = "waiting" AND doctor_id IS NULL AND date(created_at) = date("now") AND queue_sector = ?`,
+      [sectorValue],
     );
     if (supportCount?.count > 0) {
       const oldest = await db.get(
-        'SELECT created_at FROM tickets WHERE status = "waiting" AND doctor_id IS NULL AND date(created_at) = date("now") ORDER BY created_at ASC LIMIT 1',
+        `SELECT created_at FROM tickets WHERE status = "waiting" AND doctor_id IS NULL AND date(created_at) = date("now") AND queue_sector = ? ORDER BY created_at ASC LIMIT 1`,
+        [sectorValue],
       );
+
+      let waitTimeStr = null;
+      if (oldest) {
+        const raw = oldest.created_at;
+        if (raw && typeof raw === "string") {
+          if (raw.includes("T")) {
+            waitTimeStr = raw;
+          } else {
+            waitTimeStr = raw.replace(" ", "T") + ".000Z";
+          }
+        } else {
+          waitTimeStr = raw;
+        }
+      }
+
       stats.push({
         doctor_id: null,
-        doctor_name: "Sem Médico / Apoio",
+        doctor_name: sectorValue === "cirurgia" ? "Agendamento Cirurgia" : "Apoio",
         count: supportCount.count,
-        oldest_created_at: oldest?.created_at,
+        oldest_created_at: waitTimeStr,
       });
     }
 
@@ -549,7 +664,7 @@ const startServer = async () => {
 
   // Call Next Ticket (FIFO)
   app.post("/api/tickets/call-next", verifyToken, async (req, res) => {
-    const { workstation_id, user_id, doctor_id } = req.body;
+    const { workstation_id, user_id, doctor_id, queue_sector } = req.body;
 
     try {
       await db.run("BEGIN IMMEDIATE"); // Locks db for writing
@@ -557,6 +672,13 @@ const startServer = async () => {
       let query =
         'SELECT * FROM tickets WHERE status = "waiting" AND date(created_at) = date("now")';
       const params: any[] = [];
+
+      if (queue_sector) {
+        query += " AND queue_sector = ?";
+        params.push(queue_sector);
+      } else {
+        query += " AND queue_sector = 'recepcao'";
+      }
 
       if (doctor_id !== undefined) {
         if (doctor_id === null) {
@@ -700,45 +822,62 @@ const startServer = async () => {
   app.post("/api/tickets/call-random", verifyToken, async (req, res) => {
     const { workstation_id, user_id } = req.body;
 
-    // Find ALL waiting tickets
-    const tickets = await db.all(
-      'SELECT * FROM tickets WHERE status = "waiting" AND date(created_at) = date("now")',
-    );
+    try {
+      await db.run("BEGIN IMMEDIATE");
 
-    if (tickets.length === 0) {
-      return res.status(404).json({ message: "Nenhuma senha aguardando." });
+      const tickets = await db.all(
+        'SELECT * FROM tickets WHERE status = "waiting" AND date(created_at) = date("now")',
+      );
+
+      if (tickets.length === 0) {
+        await db.run("ROLLBACK");
+        return res.status(404).json({ message: "Nenhuma senha aguardando." });
+      }
+
+      const ticket = tickets[Math.floor(Math.random() * tickets.length)];
+
+      const result = await db.run(
+        `
+          UPDATE tickets 
+          SET status = 'calling', 
+              workstation_id = ?, 
+              called_by_user_id = ?, 
+              called_at = CURRENT_TIMESTAMP,
+              call_type = 'RANDOM'
+          WHERE id = ? AND status = 'waiting'
+        `,
+        [workstation_id, user_id, ticket.id],
+      );
+
+      if (result.changes === 0) {
+        await db.run("ROLLBACK");
+        return res
+          .status(409)
+          .json({ message: "Senha já foi chamada por outro atendente." });
+      }
+
+      await db.run("COMMIT");
+
+      const updatedTicket = await db.get(
+        `
+          SELECT t.*, d.name as doctor_name, w.name as workstation_name, w.code as workstation_code
+          FROM tickets t 
+          LEFT JOIN doctors d ON t.doctor_id = d.id 
+          LEFT JOIN workstations w ON t.workstation_id = w.id
+          WHERE t.id = ?
+        `,
+        ticket.id,
+      );
+
+      broadcast("ticket:calling", updatedTicket);
+      res.json(updatedTicket);
+    } catch (err: any) {
+      await db.run("ROLLBACK").catch(() => {});
+      console.error("call-random error:", err);
+      res
+        .status(500)
+        .json({ message: "Erro ao chamar senha. Tente novamente." });
     }
-
-    // Pick random
-    const ticket = tickets[Math.floor(Math.random() * tickets.length)];
-
-    // Update ticket
-    await db.run(
-      `
-        UPDATE tickets 
-        SET status = 'calling', 
-            workstation_id = ?, 
-            called_by_user_id = ?, 
-            called_at = CURRENT_TIMESTAMP,
-            call_type = 'RANDOM'
-        WHERE id = ?
-      `,
-      [workstation_id, user_id, ticket.id],
-    );
-
-    const updatedTicket = await db.get(
-      `
-        SELECT t.*, d.name as doctor_name, w.name as workstation_name, w.code as workstation_code
-        FROM tickets t 
-        LEFT JOIN doctors d ON t.doctor_id = d.id 
-        LEFT JOIN workstations w ON t.workstation_id = w.id
-        WHERE t.id = ?
-      `,
-      ticket.id,
-    );
-
-    broadcast("ticket:calling", updatedTicket);
-    res.json(updatedTicket);
   });
 
   // Update Ticket Status (Start, Finish, Missed)
@@ -863,10 +1002,18 @@ const startServer = async () => {
     });
   });
 
-  const PORT = 3000;
-  httpServer.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  });
+  if (listen) {
+    const PORT = 3000;
+    httpServer.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  }
+
+  return { app, httpServer, wss, db };
 };
 
-startServer().catch(console.error);
+if (require.main === module) {
+  startServer().catch(console.error);
+}
+
+export { app, httpServer, wss, startServer };

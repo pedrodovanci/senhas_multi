@@ -1,17 +1,17 @@
 import React, { useState, useEffect } from "react";
 import type { Doctor, Ticket } from "../types";
-import { User, CheckCircle, Stethoscope, Scissors } from "lucide-react";
-import Logo from "../components/Logo";
+import { CheckCircle, Stethoscope, LayoutGrid, Headphones, Scissors } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
+import { API_URL } from "../config";
 
 const Reception: React.FC = () => {
-  const { token, user } = useAuth();
+  const { token } = useAuth();
   const navigate = useNavigate();
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [lastTicket, setLastTicket] = useState<Ticket | null>(null);
   const [loading, setLoading] = useState(false);
-  const [ticketType, setTicketType] = useState<"consulta" | "cirurgia">(
+  const [ticketType, setTicketType] = useState<"consulta" | "outros">(
     "consulta",
   );
 
@@ -21,17 +21,17 @@ const Reception: React.FC = () => {
       return;
     }
 
-    fetch("http://localhost:3000/api/doctors", {
+    fetch(`${API_URL}/api/doctors`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((res) => res.json())
       .then((data) => setDoctors(data));
   }, [token, navigate]);
 
-  const generateTicket = async (doctorId: number) => {
+  const generateTicket = async (doctorId: number | null, subtype?: string) => {
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:3000/api/tickets", {
+      const res = await fetch(`${API_URL}/api/tickets`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -40,6 +40,7 @@ const Reception: React.FC = () => {
         body: JSON.stringify({
           doctor_id: doctorId,
           type: ticketType,
+          ...(subtype && { subtype })
         }),
       });
       const data = await res.json();
@@ -57,10 +58,7 @@ const Reception: React.FC = () => {
 
   return (
     <>
-      <div className="min-h-screen bg-gray-50 p-8 relative print:hidden">
-        <div className="absolute top-6 left-6 hidden md:block">
-          <Logo theme="dark" />
-        </div>
+      <div className="min-h-screen bg-gray-200 p-8 relative print:hidden">
         <div className="max-w-6xl mx-auto">
           <h1 className="text-3xl font-bold text-gray-800 mb-8 text-center">
             Recepção - Gerar Senha
@@ -81,15 +79,15 @@ const Reception: React.FC = () => {
             </button>
 
             <button
-              onClick={() => setTicketType("cirurgia")}
+              onClick={() => setTicketType("outros")}
               className={`flex items-center px-8 py-4 rounded-xl text-xl font-bold transition-all shadow-md ${
-                ticketType === "cirurgia"
+                ticketType === "outros"
                   ? "bg-secondary text-white scale-105 ring-4 ring-secondary/20"
                   : "bg-white text-gray-600 hover:bg-gray-100"
               }`}
             >
-              <Scissors className="mr-3 w-6 h-6" />
-              CIRURGIAS
+              <LayoutGrid className="mr-3 w-6 h-6" />
+              OUTROS
             </button>
           </div>
 
@@ -141,37 +139,50 @@ const Reception: React.FC = () => {
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {doctors.map((doctor) => (
-              <button
-                key={doctor.id}
-                onClick={() => generateTicket(doctor.id)}
-                disabled={loading}
-                className="bg-white p-6 rounded-2xl shadow-sm hover:shadow-xl transition-all transform hover:-translate-y-1 border border-gray-100 flex flex-col items-center group relative overflow-hidden"
-              >
-                <div
-                  className={`absolute top-0 left-0 w-2 h-full ${ticketType === "consulta" ? "bg-primary" : "bg-secondary"} transition-colors duration-300`}
-                />
-
-                <div
-                  className={`p-4 rounded-full mb-4 transition-colors ${
-                    ticketType === "consulta"
-                      ? "bg-primary/10 group-hover:bg-primary/20 text-primary"
-                      : "bg-secondary/10 group-hover:bg-secondary/20 text-secondary"
-                  }`}
+          {ticketType === 'consulta' ? (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+              {doctors.map((doctor) => (
+                <button
+                  key={doctor.id}
+                  onClick={() => generateTicket(doctor.id)}
+                  disabled={loading}
+                  className="bg-white py-4 px-5 rounded-xl shadow-sm hover:shadow-md transition-all transform hover:-translate-y-0.5 border border-gray-100 flex flex-col justify-center group relative overflow-hidden min-h-[80px]"
                 >
-                  <User className="w-10 h-10" />
-                </div>
-
-                <h3 className="text-lg font-bold text-gray-800 mb-1 text-center">
-                  {doctor.name}
-                </h3>
-                <p className="text-gray-500 font-medium text-sm text-center">
-                  {doctor.specialization}
-                </p>
+                  <div
+                    className={`absolute top-0 left-0 w-1.5 h-full ${ticketType === "consulta" ? "bg-primary" : "bg-secondary"} transition-colors duration-300`}
+                  />
+                  <h3 className="text-base font-bold text-gray-800 leading-tight pl-1">
+                    {doctor.name}
+                  </h3>
+                  <p className="text-gray-400 text-xs mt-0.5 pl-1">
+                    {doctor.specialization}
+                  </p>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-6 max-w-2xl mx-auto mt-8">
+              <button
+                onClick={() => generateTicket(null, 'agendamento_cirurgico')}
+                disabled={loading}
+                className="bg-white py-10 px-6 rounded-xl shadow-sm hover:shadow-md transition-all border border-gray-100 flex flex-col items-center justify-center gap-3 group relative overflow-hidden"
+              >
+                <div className="absolute top-0 left-0 w-1.5 h-full bg-secondary" />
+                <Scissors className="w-10 h-10 text-secondary" />
+                <span className="text-lg font-bold text-gray-800">Agendamento Cirúrgico</span>
               </button>
-            ))}
-          </div>
+
+              <button
+                onClick={() => generateTicket(null, 'apoio')}
+                disabled={loading}
+                className="bg-white py-10 px-6 rounded-xl shadow-sm hover:shadow-md transition-all border border-gray-100 flex flex-col items-center justify-center gap-3 group relative overflow-hidden"
+              >
+                <div className="absolute top-0 left-0 w-1.5 h-full bg-gray-400" />
+                <Headphones className="w-10 h-10 text-gray-500" />
+                <span className="text-lg font-bold text-gray-800">Apoio</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

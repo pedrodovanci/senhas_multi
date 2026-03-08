@@ -17,6 +17,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { API_URL } from "../config";
 import Logo from "../components/Logo";
 import DoctorQueueGrid from "../components/DoctorQueueGrid";
 import { HistoryModal } from "../components/HistoryModal";
@@ -64,6 +65,8 @@ const Attendant: React.FC = () => {
   const socketContext = useSocket();
   const navigate = useNavigate();
 
+  const queueSector = user?.role === "cirurgia" ? "cirurgia" : "recepcao";
+
   const [tickets, setTickets] = useState<Ticket[]>([]); // Waiting tickets for global counter
   const [currentTicket, setCurrentTicket] = useState<Ticket | null>(null);
   const [loading, setLoading] = useState(false);
@@ -83,6 +86,7 @@ const Attendant: React.FC = () => {
     // Socket listeners
     if (socketContext && socketContext.socket) {
       const handleCreated = (newTicket: Ticket) => {
+        if (newTicket.queue_sector !== queueSector) return;
         setTickets((prev) => {
           if (prev.find((t) => t.id === newTicket.id)) return prev;
           return [...prev, newTicket];
@@ -94,6 +98,9 @@ const Attendant: React.FC = () => {
         setTickets((prev) => {
           if (updatedTicket.status !== "waiting") {
             return prev.filter((t) => t.id !== updatedTicket.id);
+          }
+          if (updatedTicket.queue_sector !== queueSector) {
+             return prev.filter((t) => t.id !== updatedTicket.id);
           }
           return prev.map((t) =>
             t.id === updatedTicket.id ? updatedTicket : t,
@@ -125,6 +132,7 @@ const Attendant: React.FC = () => {
 
       // Handle Requeued (treat as created/updated to add to waiting list)
       const handleRequeued = (ticket: Ticket) => {
+        if (ticket.queue_sector !== queueSector) return;
         setTickets((prev) => {
           if (prev.find((t) => t.id === ticket.id)) return prev;
           return [...prev, ticket];
@@ -155,7 +163,7 @@ const Attendant: React.FC = () => {
   const fetchData = async () => {
     try {
       const ticketsRes = await fetch(
-        "http://localhost:3000/api/tickets?status=waiting",
+        `${API_URL}/api/tickets?status=waiting&queue_sector=${queueSector}`,
         {
           headers: { Authorization: `Bearer ${token}` },
         },
@@ -168,7 +176,7 @@ const Attendant: React.FC = () => {
         setTickets([]);
       }
 
-      const myActiveRes = await fetch(`http://localhost:3000/api/tickets`, {
+      const myActiveRes = await fetch(`${API_URL}/api/tickets?queue_sector=${queueSector}`, {
         headers: { Authorization: `Bearer ${token}` },
       }); // Get all to find mine
       const allTickets = await myActiveRes.json();
@@ -197,7 +205,7 @@ const Attendant: React.FC = () => {
 
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:3000/api/tickets/call-next", {
+      const res = await fetch(`${API_URL}/api/tickets/call-next`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -207,6 +215,7 @@ const Attendant: React.FC = () => {
           workstation_id: workstation?.id,
           user_id: user?.id,
           doctor_id: doctorId,
+          queue_sector: queueSector,
         }),
       });
 
@@ -242,7 +251,7 @@ const Attendant: React.FC = () => {
     setLoading(true);
     try {
       const res = await fetch(
-        "http://localhost:3000/api/tickets/call-specific",
+        `${API_URL}/api/tickets/call-specific`,
         {
           method: "POST",
           headers: {
@@ -279,7 +288,7 @@ const Attendant: React.FC = () => {
     setLoading(true);
     try {
       const res = await fetch(
-        `http://localhost:3000/api/tickets/${currentTicket.id}/recall`,
+        `${API_URL}/api/tickets/${currentTicket.id}/recall`,
         {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
@@ -305,7 +314,7 @@ const Attendant: React.FC = () => {
     setLoading(true);
     try {
       const res = await fetch(
-        `http://localhost:3000/api/tickets/${currentTicket.id}/status`,
+        `${API_URL}/api/tickets/${currentTicket.id}/status`,
         {
           method: "PUT",
           headers: {
@@ -335,7 +344,7 @@ const Attendant: React.FC = () => {
   const waitingCount = tickets.filter((t) => t.status === "waiting").length;
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col">
+    <div className="min-h-screen bg-gray-200 flex flex-col">
       {/* Header */}
       <header className="bg-white shadow-sm p-4 flex justify-between items-center border-b border-gray-200 sticky top-0 z-10 h-20">
         <div className="flex items-center gap-6">
@@ -515,6 +524,7 @@ const Attendant: React.FC = () => {
             onCall={handleCallNext}
             disabled={loading || !!currentTicket}
             refreshTrigger={refreshTrigger}
+            queueSector={queueSector}
           />
         </div>
       </main>
@@ -524,17 +534,20 @@ const Attendant: React.FC = () => {
         isOpen={isHistoryOpen}
         onClose={() => setIsHistoryOpen(false)}
         refreshTrigger={refreshTrigger}
+        queueSector={queueSector}
       />
       <AttendanceModal
         isOpen={isAttendanceOpen}
         onClose={() => setIsAttendanceOpen(false)}
         refreshTrigger={refreshTrigger}
         onCall={handleCallSpecific}
+        queueSector={queueSector}
       />
       <RequeueModal
         isOpen={isRequeueOpen}
         onClose={() => setIsRequeueOpen(false)}
         refreshTrigger={refreshTrigger}
+        queueSector={queueSector}
       />
     </div>
   );

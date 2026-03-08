@@ -3,7 +3,7 @@ import { useSocket } from "../contexts/SocketContext";
 import { useSearchParams } from "react-router-dom";
 import type { Ticket } from "../types";
 import { Monitor } from "lucide-react";
-import Logo from "../components/Logo";
+import { API_URL } from "../config";
 
 const TVPanel: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -32,7 +32,7 @@ const TVPanel: React.FC = () => {
       try {
         // Fetch history first
         const histRes = await fetch(
-          "http://localhost:3000/api/tickets/history",
+          `${API_URL}/api/tickets/history`,
         );
         const histData: Ticket[] = await histRes.json();
 
@@ -87,18 +87,18 @@ const TVPanel: React.FC = () => {
       </div>
 
       {/* Header */}
-      <header className="relative z-10 flex justify-between items-center p-8 border-b border-gray-800 bg-gray-900/80 backdrop-blur-md">
-        <div className="flex items-center gap-4">
-          <Logo theme="light" />
-          <div className="ml-4">
-            <h1 className="text-3xl font-bold tracking-tight text-white">
-              Centro do Cérebro e Coluna
-            </h1>
-            <p className="text-gray-400 text-lg">Sistema de Atendimento</p>
-          </div>
+      <header className="relative z-10 grid grid-cols-3 items-center p-8 border-b border-gray-800 bg-gray-900/80 backdrop-blur-md h-64">
+        <div></div> {/* Spacer for centering */}
+        
+        <div className="flex justify-center">
+          <img 
+            src="/logo-instagram.png" 
+            alt="Logo" 
+            className="h-48 object-contain"
+          />
         </div>
 
-        <div className="flex items-center gap-6">
+        <div className="flex justify-end items-center gap-6">
           <div className="text-right">
             <div className="text-5xl font-mono font-bold text-white tracking-widest">
               {currentTime.toLocaleTimeString([], {

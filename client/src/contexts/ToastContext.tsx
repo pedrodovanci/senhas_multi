@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useRef, type ReactNode } from 'react';
 import { X, CheckCircle, AlertCircle, Info } from 'lucide-react';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning';
@@ -30,9 +30,11 @@ interface ToastProviderProps {
 
 export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const nextIdRef = useRef(1);
 
   const addToast = (message: string, type: ToastType = 'info') => {
-    const id = Math.random().toString(36).substring(2, 9);
+    const id = String(nextIdRef.current);
+    nextIdRef.current += 1;
     setToasts((prev) => [...prev, { id, message, type }]);
 
     // Auto remove after 3 seconds

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import type { User } from "../types";
 import { BaseModal } from "./BaseModal";
 import { useAuth } from "../contexts/AuthContext";
+import { API_URL } from "../config";
 import {
   Edit,
   Trash,
@@ -10,6 +11,7 @@ import {
   ShieldAlert,
   Check,
   X as XIcon,
+  Activity,
 } from "lucide-react";
 
 export const UsersManager: React.FC = () => {
@@ -20,7 +22,7 @@ export const UsersManager: React.FC = () => {
   const [formData, setFormData] = useState({
     username: "",
     password: "",
-    role: "attendant" as "admin" | "attendant",
+    role: "attendant" as "admin" | "attendant" | "cirurgia",
     active: true,
   });
   const [loading, setLoading] = useState(false);
@@ -31,7 +33,7 @@ export const UsersManager: React.FC = () => {
 
   const fetchUsers = async () => {
     try {
-      const res = await fetch("http://localhost:3000/api/users", {
+      const res = await fetch(`${API_URL}/api/users`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -45,14 +47,18 @@ export const UsersManager: React.FC = () => {
     e.preventDefault();
     setLoading(true);
     try {
-      const payload = { ...formData };
+      const payload: {
+        username: string;
+        password?: string;
+        role: "admin" | "attendant" | "cirurgia";
+        active: boolean;
+      } = { ...formData };
       if (editingUser && !payload.password) {
-        // @ts-ignore
-        delete payload.password; // Don't send empty password on edit
+        delete payload.password;
       }
 
       if (editingUser) {
-        await fetch(`http://localhost:3000/api/users/${editingUser.id}`, {
+        await fetch(`${API_URL}/api/users/${editingUser.id}`, {
           method: "PUT",
           headers: { 
             "Content-Type": "application/json",
@@ -61,7 +67,7 @@ export const UsersManager: React.FC = () => {
           body: JSON.stringify(payload),
         });
       } else {
-        await fetch("http://localhost:3000/api/users", {
+        await fetch(`${API_URL}/api/users`, {
           method: "POST",
           headers: { 
             "Content-Type": "application/json",
@@ -83,7 +89,7 @@ export const UsersManager: React.FC = () => {
   const handleDelete = async (id: number) => {
     if (!confirm("Tem certeza que deseja excluir este usuário?")) return;
     try {
-      await fetch(`http://localhost:3000/api/users/${id}`, {
+      await fetch(`${API_URL}/api/users/${id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -167,10 +173,18 @@ export const UsersManager: React.FC = () => {
                 </td>
                 <td className="p-4">
                   <span
-                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium ${user.role === "admin" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}
+                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium ${
+                      user.role === "admin"
+                        ? "bg-purple-100 text-purple-700"
+                        : user.role === "cirurgia"
+                        ? "bg-emerald-100 text-emerald-700"
+                        : "bg-blue-100 text-blue-700"
+                    }`}
                   >
                     {user.role === "admin" ? (
                       <ShieldAlert size={12} />
+                    ) : user.role === "cirurgia" ? (
+                      <Activity size={12} />
                     ) : (
                       <Shield size={12} />
                     )}
@@ -224,7 +238,7 @@ export const UsersManager: React.FC = () => {
                 setFormData({ ...formData, username: e.target.value })
               }
               className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
-              disabled={editingUser && editingUser.username === "admin"}
+              disabled={editingUser?.username === "admin"}
             />
           </div>
           <div>
@@ -253,12 +267,16 @@ export const UsersManager: React.FC = () => {
             <select
               value={formData.role}
               onChange={(e) =>
-                setFormData({ ...formData, role: e.target.value as any })
+                setFormData({
+                  ...formData,
+                  role: e.target.value as "admin" | "attendant" | "cirurgia",
+                })
               }
               className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
-              disabled={editingUser && editingUser.username === "admin"}
+              disabled={editingUser?.username === "admin"}
             >
               <option value="attendant">Atendente</option>
+              <option value="cirurgia">Cirurgia</option>
               <option value="admin">Administrador</option>
             </select>
           </div>
@@ -272,7 +290,7 @@ export const UsersManager: React.FC = () => {
                 setFormData({ ...formData, active: e.target.checked })
               }
               className="w-4 h-4 text-primary border-gray-300 rounded focus:ring-primary"
-              disabled={editingUser && editingUser.username === "admin"}
+              disabled={editingUser?.username === "admin"}
             />
             <label
               htmlFor="active"

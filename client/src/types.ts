@@ -1,7 +1,7 @@
 export interface User {
   id: number;
   username: string;
-  role: "admin" | "attendant";
+  role: "admin" | "attendant" | "cirurgia";
   active?: boolean;
 }
 
@@ -23,7 +23,9 @@ export interface Ticket {
   id: number;
   number: string;
   status: "waiting" | "calling" | "in_attendance" | "finished" | "missed";
-  type: "consulta" | "cirurgia";
+  type: "consulta" | "outros";
+  subtype?: string | null;
+  queue_sector: "recepcao" | "cirurgia";
   doctor_id: number;
   workstation_id?: number;
   created_at: string;
@@ -38,4 +40,11 @@ export interface Ticket {
   workstation_name?: string;
   workstation_code?: string;
   printError?: string;
+}
+
+export interface QueueStat {
+  doctor_id: number | null;
+  doctor_name: string;
+  count: number;
+  oldest_created_at: string | null;
 }

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { BaseModal } from "./BaseModal";
+import { API_URL } from "../config";
 import type { Ticket } from "../types";
 import { CheckCircle2, Clock, XCircle, PlayCircle } from "lucide-react";
 
@@ -7,12 +8,14 @@ interface HistoryModalProps {
   isOpen: boolean;
   onClose: () => void;
   refreshTrigger: number;
+  queueSector?: string;
 }
 
 export const HistoryModal: React.FC<HistoryModalProps> = ({
   isOpen,
   onClose,
   refreshTrigger,
+  queueSector,
 }) => {
   const [history, setHistory] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(false);
@@ -22,13 +25,17 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
     if (isOpen) {
       fetchHistory();
     }
-  }, [isOpen, refreshTrigger]);
+  }, [isOpen, refreshTrigger, queueSector]);
 
   const fetchHistory = async () => {
     setLoading(true);
     try {
+      const queryParams = new URLSearchParams({ limit: '50' });
+      if (queueSector) {
+        queryParams.append('queue_sector', queueSector);
+      }
       const res = await fetch(
-        "http://localhost:3000/api/tickets/history?limit=50",
+        `${API_URL}/api/tickets/history?${queryParams.toString()}`,
       );
       const data = await res.json();
       if (Array.isArray(data)) {

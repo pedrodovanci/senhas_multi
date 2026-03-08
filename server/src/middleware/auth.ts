@@ -1,8 +1,15 @@
 
+import dotenv from "dotenv";
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 
-const SECRET_KEY = process.env.JWT_SECRET || 'sga-secret-key-change-me-in-prod';
+dotenv.config();
+
+const SECRET_KEY = process.env.JWT_SECRET;
+if (!SECRET_KEY) {
+    console.error('FATAL: JWT_SECRET não definido no .env. O servidor não pode iniciar.');
+    process.exit(1);
+}
 
 export interface AuthRequest extends Request {
     user?: {

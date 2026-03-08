@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState } from 'react';
 import type { User, Workstation } from '../types';
 
 interface AuthContextType {
@@ -12,19 +12,27 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [workstation, setWorkstation] = useState<Workstation | null>(null);
-  const [token, setToken] = useState<string | null>(null);
-
-  useEffect(() => {
+  const [user, setUser] = useState<User | null>(() => {
     const storedUser = localStorage.getItem('user');
+    if (!storedUser) return null;
+    try {
+      return JSON.parse(storedUser) as User;
+    } catch {
+      return null;
+    }
+  });
+  const [workstation, setWorkstation] = useState<Workstation | null>(() => {
     const storedWs = localStorage.getItem('workstation');
-    const storedToken = localStorage.getItem('token');
-    
-    if (storedUser) setUser(JSON.parse(storedUser));
-    if (storedWs) setWorkstation(JSON.parse(storedWs));
-    if (storedToken) setToken(storedToken);
-  }, []);
+    if (!storedWs) return null;
+    try {
+      return JSON.parse(storedWs) as Workstation;
+    } catch {
+      return null;
+    }
+  });
+  const [token, setToken] = useState<string | null>(() => {
+    return localStorage.getItem('token');
+  });
 
   const login = (userData: User, authToken: string, wsData?: Workstation) => {
     setUser(userData);

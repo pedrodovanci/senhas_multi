@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
+import { API_URL } from "../config";
 import {
   LayoutDashboard,
   LogOut,
@@ -51,7 +52,7 @@ const Admin: React.FC = () => {
     }
 
     const fetchStats = () => {
-      fetch("http://localhost:3000/api/stats", {
+      fetch(`${API_URL}/api/stats`, {
         headers: { Authorization: `Bearer ${token}` },
       })
         .then((res) => res.json())

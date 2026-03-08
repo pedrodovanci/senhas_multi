@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { BaseModal } from "./BaseModal";
+import { API_URL } from "../config";
 import type { Ticket } from "../types";
 import { Play } from "lucide-react";
 
@@ -8,6 +9,7 @@ interface AttendanceModalProps {
   onClose: () => void;
   refreshTrigger: number;
   onCall: (ticketId: number) => void;
+  queueSector?: string;
 }
 
 export const AttendanceModal: React.FC<AttendanceModalProps> = ({
@@ -15,6 +17,7 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({
   onClose,
   refreshTrigger,
   onCall,
+  queueSector,
 }) => {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(false);
@@ -26,13 +29,17 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({
       const interval = setInterval(() => setNow(new Date()), 1000); // Update timers
       return () => clearInterval(interval);
     }
-  }, [isOpen, refreshTrigger]);
+  }, [isOpen, refreshTrigger, queueSector]);
 
   const fetchTickets = async () => {
     setLoading(true);
     try {
+      const queryParams = new URLSearchParams({ status: 'waiting' });
+      if (queueSector) {
+        queryParams.append('queue_sector', queueSector);
+      }
       const res = await fetch(
-        "http://localhost:3000/api/tickets?status=waiting",
+        `${API_URL}/api/tickets?${queryParams.toString()}`,
       );
       const data = await res.json();
       if (Array.isArray(data)) {

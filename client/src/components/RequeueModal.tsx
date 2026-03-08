@@ -3,18 +3,21 @@ import { BaseModal } from "./BaseModal";
 import type { Ticket } from "../types";
 import { useToast } from "../contexts/ToastContext";
 import { useAuth } from "../contexts/AuthContext";
-import { RotateCcw, AlertCircle } from "lucide-react";
+import { API_URL } from "../config";
+import { RotateCcw } from "lucide-react";
 
 interface RequeueModalProps {
   isOpen: boolean;
   onClose: () => void;
   refreshTrigger: number;
+  queueSector?: string;
 }
 
 export const RequeueModal: React.FC<RequeueModalProps> = ({
   isOpen,
   onClose,
   refreshTrigger,
+  queueSector,
 }) => {
   const { addToast } = useToast();
   const { token } = useAuth();
@@ -28,12 +31,16 @@ export const RequeueModal: React.FC<RequeueModalProps> = ({
       fetchTickets();
       setConfirmTicket(null);
     }
-  }, [isOpen, refreshTrigger]);
+  }, [isOpen, refreshTrigger, queueSector]);
 
   const fetchTickets = async () => {
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:3000/api/tickets/no-show");
+      const queryParams = new URLSearchParams();
+      if (queueSector) {
+        queryParams.append('queue_sector', queueSector);
+      }
+      const res = await fetch(`${API_URL}/api/tickets/no-show?${queryParams.toString()}`);
       const data = await res.json();
       if (Array.isArray(data)) {
         setTickets(data);
@@ -53,12 +60,13 @@ export const RequeueModal: React.FC<RequeueModalProps> = ({
     // Fetch queue size for this doctor
     try {
       const res = await fetch(
-        "http://localhost:3000/api/tickets/waiting-stats",
+        `${API_URL}/api/tickets/waiting-stats`,
       );
-      const stats = await res.json();
-      const doctorStat = stats.find(
-        (s: any) => s.doctor_id === ticket.doctor_id,
-      );
+      const stats = (await res.json()) as Array<{
+        doctor_id: number | null;
+        count: number;
+      }>;
+      const doctorStat = stats.find((s) => s.doctor_id === ticket.doctor_id);
       setCurrentQueueSize(doctorStat ? doctorStat.count : 0);
     } catch (e) {
       console.error(e);
@@ -71,7 +79,7 @@ export const RequeueModal: React.FC<RequeueModalProps> = ({
 
     try {
       const res = await fetch(
-        `http://localhost:3000/api/tickets/${confirmTicket.id}/requeue`,
+        `${API_URL}/api/tickets/${confirmTicket.id}/requeue`,
         {
           method: "POST",
           headers: {

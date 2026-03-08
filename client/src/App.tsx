@@ -8,6 +8,7 @@ import Login from "./pages/Login";
 import Reception from "./pages/Reception";
 import Attendant from "./pages/Attendant";
 import TVPanel from "./pages/TVPanel";
+import Display from "./pages/Display";
 import Admin from "./pages/Admin";
 
 class ErrorBoundary extends Component<
@@ -70,6 +71,7 @@ const App: React.FC = () => {
                 <Route path="/recepcao/consultas" element={<Reception />} />
                 <Route path="/atendente" element={<Attendant />} />
                 <Route path="/painel" element={<TVPanel />} />
+                <Route path="/display" element={<Display />} />
                 <Route path="/admin" element={<Admin />} />
                 <Route path="/" element={<Navigate to="/login" replace />} />
               </Routes>

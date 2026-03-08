@@ -3,5 +3,8 @@ dist
 .DS_Store
 *.log
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.zip
 .env
 .vscode

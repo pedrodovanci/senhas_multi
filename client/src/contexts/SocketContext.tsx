@@ -1,37 +1,38 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
+import { WS_URL } from '../config';
 
 // Define the interface for the context
 interface SocketContextType {
   socket: WebSocket | null;
-  on: (event: string, callback: (data: any) => void) => void;
-  off: (event: string, callback: (data: any) => void) => void;
+  on: <T>(event: string, callback: (data: T) => void) => void;
+  off: <T>(event: string, callback: (data: T) => void) => void;
 }
 
 const SocketContext = createContext<SocketContextType | null>(null);
 
 export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [socket, setSocket] = useState<WebSocket | null>(null);
-  // Store listeners: eventName -> array of callbacks
-  const [listeners] = useState(new Map<string, Array<(data: any) => void>>());
+  const [listeners] = useState(new Map<string, Array<(data: unknown) => void>>());
 
   useEffect(() => {
     let ws: WebSocket;
-    let reconnectInterval: any;
+    let reconnectInterval: ReturnType<typeof setTimeout> | null = null;
 
     const connect = () => {
-      ws = new WebSocket('ws://localhost:3000');
+      ws = new WebSocket(WS_URL);
 
       ws.onopen = () => {
         console.log('Connected to WebSocket');
         setSocket(ws);
       };
 
-      ws.onmessage = (event) => {
+      ws.onmessage = (event: MessageEvent<string>) => {
         try {
-          const { type, data } = JSON.parse(event.data);
-          const callbacks = listeners.get(type);
+          const parsed = JSON.parse(event.data) as { type?: string; data?: unknown };
+          if (!parsed.type) return;
+          const callbacks = listeners.get(parsed.type);
           if (callbacks) {
-            callbacks.forEach(cb => cb(data));
+            callbacks.forEach(cb => cb(parsed.data));
           }
         } catch (err) {
           console.error('Failed to parse WebSocket message:', err);
@@ -41,12 +42,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       ws.onclose = () => {
         console.log('Disconnected from WebSocket');
         setSocket(null);
-        // Try to reconnect after 3 seconds
         reconnectInterval = setTimeout(connect, 3000);
       };
 
-      ws.onerror = (err) => {
-        console.error('WebSocket error:', err);
+      ws.onerror = (event: Event) => {
+        console.error('WebSocket error:', event);
         ws.close();
       };
     };
@@ -59,22 +59,27 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, [listeners]);
 
-  const on = (event: string, callback: (data: any) => void) => {
+  const on = useCallback(<T,>(event: string, callback: (data: T) => void) => {
     if (!listeners.has(event)) {
       listeners.set(event, []);
     }
-    listeners.get(event)?.push(callback);
-  };
+    listeners.get(event)?.push(callback as (data: unknown) => void);
+  }, [listeners]);
 
-  const off = (event: string, callback: (data: any) => void) => {
+  const off = useCallback(<T,>(event: string, callback: (data: T) => void) => {
     const callbacks = listeners.get(event);
     if (callbacks) {
-      listeners.set(event, callbacks.filter(cb => cb !== callback));
+      listeners.set(
+        event,
+        callbacks.filter(cb => cb !== (callback as (data: unknown) => void))
+      );
     }
-  };
+  }, [listeners]);
+
+  const value = useMemo(() => ({ socket, on, off }), [socket, on, off]);
 
   return (
-    <SocketContext.Provider value={{ socket, on, off }}>
+    <SocketContext.Provider value={value}>
       {children}
     </SocketContext.Provider>
   );
