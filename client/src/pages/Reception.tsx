@@ -1,12 +1,18 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import type { Doctor, Ticket } from "../types";
-import { CheckCircle, Stethoscope, LayoutGrid, Headphones, Scissors } from "lucide-react";
+import {
+  CheckCircle,
+  Stethoscope,
+  LayoutGrid,
+  Headphones,
+  Scissors,
+} from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { API_URL } from "../config";
 
 const Reception: React.FC = () => {
-  const { token } = useAuth();
+  const { token, logout } = useAuth();
   const navigate = useNavigate();
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [lastTicket, setLastTicket] = useState<Ticket | null>(null);
@@ -14,6 +20,21 @@ const Reception: React.FC = () => {
   const [ticketType, setTicketType] = useState<"consulta" | "outros">(
     "consulta",
   );
+  const printTriggered = useRef(false);
+
+  useEffect(() => {
+    if (lastTicket && !printTriggered.current) {
+      printTriggered.current = true;
+      // Delay de 300ms para garantir que o layout de impressão
+      // já foi renderizado no DOM antes de chamar window.print()
+      setTimeout(() => {
+        window.print();
+      }, 300);
+    }
+    if (!lastTicket) {
+      printTriggered.current = false;
+    }
+  }, [lastTicket]);
 
   useEffect(() => {
     if (!token) {
@@ -24,9 +45,18 @@ const Reception: React.FC = () => {
     fetch(`${API_URL}/api/doctors`, {
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then((res) => res.json())
-      .then((data) => setDoctors(data));
-  }, [token, navigate]);
+      .then((res) => {
+        if (res.status === 401) {
+          logout();
+          navigate("/login");
+          return null;
+        }
+        return res.json();
+      })
+      .then((data) => {
+        if (data) setDoctors(data);
+      });
+  }, [token, navigate, logout]);
 
   const generateTicket = async (doctorId: number | null, subtype?: string) => {
     setLoading(true);
@@ -40,14 +70,23 @@ const Reception: React.FC = () => {
         body: JSON.stringify({
           doctor_id: doctorId,
           type: ticketType,
-          ...(subtype && { subtype })
+          ...(subtype && { subtype }),
         }),
       });
+
+      if (res.status === 401) {
+        alert("Sessão expirada. Por favor, faça login novamente.");
+        logout();
+        navigate("/login");
+        return;
+      }
+
+      if (!res.ok) {
+        throw new Error("Falha na requisição");
+      }
+
       const data = await res.json();
       setLastTicket(data);
-
-      // Auto-print handled by server
-      // If error, it will be in data.printError
     } catch (err) {
       console.error(err);
       alert("Erro ao gerar senha");
@@ -58,6 +97,22 @@ const Reception: React.FC = () => {
 
   return (
     <>
+      <style>{`
+        @media print {
+          @page {
+            width: 58mm;
+            margin: 2mm 2mm 8mm 2mm;
+          }
+          body * { visibility: hidden; }
+          #ticket-print, #ticket-print * { visibility: visible; }
+          #ticket-print {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 54mm;
+          }
+        }
+      `}</style>
       <div className="min-h-screen bg-gray-200 p-8 relative print:hidden">
         <div className="max-w-6xl mx-auto">
           <h1 className="text-3xl font-bold text-gray-800 mb-8 text-center">
@@ -114,20 +169,10 @@ const Reception: React.FC = () => {
                   Aguarde ser chamado no painel.
                 </p>
 
-                {lastTicket.printError ? (
-                  <div className="mb-6 p-4 bg-red-100 text-red-700 rounded-lg text-sm">
-                    <strong>Aviso:</strong> {lastTicket.printError}
-                    <br />
-                    <span className="text-xs">
-                      Verifique a impressora padrão do sistema.
-                    </span>
-                  </div>
-                ) : (
-                  <div className="mb-6 text-green-600 font-medium text-sm flex items-center justify-center gap-2">
-                    <CheckCircle className="w-4 h-4" /> Senha enviada para
-                    impressão
-                  </div>
-                )}
+                <div className="mb-6 text-green-600 font-medium text-sm flex items-center justify-center gap-2">
+                  <CheckCircle className="w-4 h-4" /> Senha enviada para
+                  impressão
+                </div>
 
                 <button
                   onClick={() => setLastTicket(null)}
@@ -139,7 +184,7 @@ const Reception: React.FC = () => {
             </div>
           )}
 
-          {ticketType === 'consulta' ? (
+          {ticketType === "consulta" ? (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
               {doctors.map((doctor) => (
                 <button
@@ -163,17 +208,19 @@ const Reception: React.FC = () => {
           ) : (
             <div className="grid grid-cols-2 gap-6 max-w-2xl mx-auto mt-8">
               <button
-                onClick={() => generateTicket(null, 'agendamento_cirurgico')}
+                onClick={() => generateTicket(null, "agendamento_cirurgico")}
                 disabled={loading}
                 className="bg-white py-10 px-6 rounded-xl shadow-sm hover:shadow-md transition-all border border-gray-100 flex flex-col items-center justify-center gap-3 group relative overflow-hidden"
               >
                 <div className="absolute top-0 left-0 w-1.5 h-full bg-secondary" />
                 <Scissors className="w-10 h-10 text-secondary" />
-                <span className="text-lg font-bold text-gray-800">Agendamento Cirúrgico</span>
+                <span className="text-lg font-bold text-gray-800">
+                  Agendamento Cirúrgico
+                </span>
               </button>
 
               <button
-                onClick={() => generateTicket(null, 'apoio')}
+                onClick={() => generateTicket(null, "apoio")}
                 disabled={loading}
                 className="bg-white py-10 px-6 rounded-xl shadow-sm hover:shadow-md transition-all border border-gray-100 flex flex-col items-center justify-center gap-3 group relative overflow-hidden"
               >
@@ -188,35 +235,120 @@ const Reception: React.FC = () => {
 
       {/* Print Layout */}
       {lastTicket && (
-        <div className="hidden print:flex flex-col items-center justify-center p-8 text-center h-screen w-full bg-white text-black">
-          <div className="w-full max-w-[300px]">
-            <h1 className="text-xl font-bold mb-1">
-              Centro do Cérebro e Coluna
-            </h1>
-            <p className="text-xs text-gray-500 mb-4">Gestão de Atendimento</p>
-
-            <div className="border-b-2 border-black mb-4"></div>
-
-            <div className="text-sm font-bold uppercase mb-2">SENHA</div>
-            <div className="text-7xl font-black mb-4 tracking-tighter leading-none">
-              {lastTicket.number}
-            </div>
-
-            <div className="bg-black text-white px-2 py-1 rounded text-lg font-bold uppercase mb-4 inline-block">
-              {lastTicket.type}
-            </div>
-
-            <div className="text-sm mb-6 font-mono">
-              {new Date().toLocaleString()}
-            </div>
-
-            <div className="border-b-2 border-black mb-6"></div>
-
-            <p className="text-base font-bold mb-2">
-              Aguarde ser chamado no painel.
-            </p>
-            <p className="text-xs">Obrigado pela preferência.</p>
+        <div
+          id="ticket-print"
+          style={{
+            fontFamily: "monospace",
+            fontSize: "12px",
+            width: "54mm",
+            padding: "0",
+            textAlign: "center",
+            color: "#000",
+            background: "#fff",
+          }}
+          className="hidden print:block"
+        >
+          <img
+            src="/logo-ccc.png"
+            
+            style={{
+              maxWidth: "40mm",
+              height: "auto",
+              margin: "0 auto 4px auto",
+              display: "block",
+            }}
+          />
+          <div
+            style={{
+              fontWeight: "bold",
+              fontSize: "13px",
+              marginBottom: "2px",
+            }}
+          >
+            
           </div>
+          <div
+            style={{
+              fontWeight: "bold",
+              fontSize: "13px",
+              marginBottom: "6px",
+            }}
+          >
+            
+          </div>
+
+          <div style={{ borderTop: "1px dashed #000", marginBottom: "8px" }} />
+
+          <div
+            style={{
+              fontSize: "10px",
+              fontWeight: "bold",
+              letterSpacing: "2px",
+              marginBottom: "2px",
+            }}
+          >
+            SENHA
+          </div>
+          <div
+            style={{
+              fontSize: "40px",
+              fontWeight: "900",
+              lineHeight: "1",
+              marginBottom: "6px",
+              letterSpacing: "-1px",
+            }}
+          >
+            {lastTicket.number}
+          </div>
+
+          <div
+            style={{
+              display: "inline-block",
+              border: "1px solid #000",
+              padding: "1px 6px",
+              fontSize: "11px",
+              fontWeight: "bold",
+              textTransform: "uppercase",
+              marginBottom: "8px",
+            }}
+          >
+            {lastTicket.subtype
+              ? lastTicket.subtype.replace("_", " ").toUpperCase()
+              : lastTicket.type.toUpperCase()}
+          </div>
+
+          {lastTicket.doctor_name && (
+            <div
+              style={{
+                fontSize: "11px",
+                marginBottom: "6px",
+                fontWeight: "bold",
+              }}
+            >
+              {lastTicket.doctor_name}
+            </div>
+          )}
+
+          <div style={{ borderTop: "1px dashed #000", marginBottom: "6px" }} />
+
+          <div style={{ fontSize: "10px", marginBottom: "8px" }}>
+            {new Date().toLocaleString("pt-BR")}
+          </div>
+
+          <div
+            style={{
+              fontSize: "11px",
+              fontWeight: "bold",
+              marginBottom: "2px",
+            }}
+          >
+            Aguarde ser chamado
+          </div>
+          <div style={{ fontSize: "11px", marginBottom: "2px" }}>
+            no painel.
+          </div>
+
+          <div style={{ borderTop: "1px dashed #000", marginTop: "8px" }} />
         </div>
       )}
     </>

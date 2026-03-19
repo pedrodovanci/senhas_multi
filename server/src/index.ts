@@ -3,6 +3,8 @@ import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import cors from "cors";
 import bcrypt from "bcrypt";
+import fs from "fs";
+import path from "path";
 import { initDb } from "./database";
 import {
   generateToken,
@@ -10,28 +12,13 @@ import {
   requireAdmin,
   AuthRequest,
 } from "./middleware/auth";
-import {
-  ConsolePrinter,
-  NetworkPrinter,
-  WindowsPrinter,
-  IPrinter,
-} from "./services/PrinterService";
 
 const app = express();
 const httpServer = createServer(app);
 const wss = new WebSocketServer({ server: httpServer });
 
 // Initialize Printer
-const printerHost = process.env.PRINTER_HOST;
-let printer: IPrinter;
-
-if (printerHost) {
-  printer = new NetworkPrinter(printerHost);
-} else if (process.platform === "win32") {
-  printer = new WindowsPrinter();
-} else {
-  printer = new ConsolePrinter();
-}
+// Printer logic removed as it's now handled by the client
 
 app.use(cors());
 app.use(express.json());
@@ -182,7 +169,10 @@ const startServer = async (listen: boolean = true) => {
       });
     }
 
-    if (workstation.current_user_id && workstation.current_user_id !== user.id) {
+    if (
+      workstation.current_user_id &&
+      workstation.current_user_id !== user.id
+    ) {
       return res.status(409).json({
         success: false,
         message: "Este posto de trabalho já está ocupado por outro usuário.",
@@ -405,7 +395,8 @@ const startServer = async (listen: boolean = true) => {
       prefix = "AC";
     }
 
-    const queue_sector = subtype === "agendamento_cirurgico" ? "cirurgia" : "recepcao";
+    const queue_sector =
+      subtype === "agendamento_cirurgico" ? "cirurgia" : "recepcao";
 
     try {
       await db.run("BEGIN IMMEDIATE");
@@ -418,7 +409,14 @@ const startServer = async (listen: boolean = true) => {
 
       const result = await db.run(
         "INSERT INTO tickets (number, doctor_id, type, subtype, queue_sector, status) VALUES (?, ?, ?, ?, ?, ?)",
-        [ticketNumber, doctor_id || null, type || "consulta", subtype || null, queue_sector, "waiting"],
+        [
+          ticketNumber,
+          doctor_id || null,
+          type || "consulta",
+          subtype || null,
+          queue_sector,
+          "waiting",
+        ],
       );
 
       await db.run("COMMIT");
@@ -435,20 +433,13 @@ const startServer = async (listen: boolean = true) => {
 
       broadcast("ticket:created", newTicket);
 
-      // Print ticket
-      let printError = null;
-      try {
-        await printer.printTicket(newTicket);
-      } catch (err: any) {
-        console.error("Failed to print ticket:", err);
-        printError = "Falha ao imprimir: " + (err.message || "Erro desconhecido");
-      }
-
-      res.json({ ...newTicket, printError });
+      res.json(newTicket);
     } catch (err: any) {
       await db.run("ROLLBACK").catch(() => {});
       console.error("Error creating ticket:", err);
-      res.status(500).json({ message: "Failed to create ticket", error: err.message });
+      res
+        .status(500)
+        .json({ message: "Failed to create ticket", error: err.message });
     }
   });
 
@@ -578,7 +569,8 @@ const startServer = async (listen: boolean = true) => {
   // Get Waiting Stats by Doctor
   app.get("/api/tickets/waiting-stats", async (req, res) => {
     const { queue_sector } = req.query;
-    const sectorValue = typeof queue_sector === "string" ? queue_sector : "recepcao";
+    const sectorValue =
+      typeof queue_sector === "string" ? queue_sector : "recepcao";
 
     // Get all doctors first
     const doctors = await db.all("SELECT * FROM doctors");
@@ -653,7 +645,8 @@ const startServer = async (listen: boolean = true) => {
 
       stats.push({
         doctor_id: null,
-        doctor_name: sectorValue === "cirurgia" ? "Agendamento Cirurgia" : "Apoio",
+        doctor_name:
+          sectorValue === "cirurgia" ? "Agendamento Cirurgia" : "Apoio",
         count: supportCount.count,
         oldest_created_at: waitTimeStr,
       });
@@ -994,6 +987,23 @@ const startServer = async (listen: boolean = true) => {
     });
   });
 
+  const staticRootCandidates = [
+    path.resolve(process.cwd(), "public"),
+    path.resolve(process.cwd(), "../client/dist"),
+  ];
+
+  const staticRoot = staticRootCandidates.find((p) =>
+    fs.existsSync(path.join(p, "index.html")),
+  );
+
+  if (staticRoot) {
+    const clientIndexPath = path.join(staticRoot, "index.html");
+    app.use(express.static(staticRoot));
+    app.get(/^\/(?!api(\/|$)).*/, (_req, res) => {
+      res.sendFile(clientIndexPath);
+    });
+  }
+
   // --- WebSocket ---
   wss.on("connection", (ws) => {
     console.log("Client connected");
@@ -1003,10 +1013,22 @@ const startServer = async (listen: boolean = true) => {
   });
 
   if (listen) {
-    const PORT = 3000;
-    httpServer.listen(PORT, () => {
+    const PORT = process.env.PORT || 3000;
+    const server = httpServer.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
+
+    // Graceful shutdown
+    const shutdown = () => {
+      console.log("Shutting down server...");
+      server.close(() => {
+        console.log("Server closed");
+        process.exit(0);
+      });
+    };
+
+    process.on("SIGTERM", shutdown);
+    process.on("SIGINT", shutdown);
   }
 
   return { app, httpServer, wss, db };

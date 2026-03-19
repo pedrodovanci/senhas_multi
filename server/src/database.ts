@@ -14,8 +14,36 @@ export const initDb = async () => {
   await db.run("PRAGMA busy_timeout = 5000"); // Wait up to 5s if locked
   await db.run("PRAGMA synchronous = NORMAL"); // Balance between safety and performance
 
+  // Check for interrupted migration
+  const ticketsOld = await db.get(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='tickets_old'",
+  );
+  if (ticketsOld) {
+    console.warn(
+      "Found tickets_old table. Previous migration might have failed. Restoring...",
+    );
+    await db.run("DROP TABLE IF EXISTS tickets");
+    await db.run("ALTER TABLE tickets_old RENAME TO tickets");
+    console.log("Restored tickets table from tickets_old.");
+  }
+
+  // Check for interrupted users migration
+  const usersOld = await db.get(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='users_old'",
+  );
+  if (usersOld) {
+    console.warn(
+      "Found users_old table. Previous migration might have failed. Restoring...",
+    );
+    await db.run("DROP TABLE IF EXISTS users");
+    await db.run("ALTER TABLE users_old RENAME TO users");
+    console.log("Restored users table from users_old.");
+  }
+
   // Check if users table needs migration for 'cirurgia' role
-  const usersTable = await db.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'");
+  const usersTable = await db.get(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'",
+  );
   if (usersTable && !usersTable.sql.includes("'cirurgia'")) {
     console.log("Migrating users table to support 'cirurgia' role...");
     await db.run("PRAGMA foreign_keys=OFF");
@@ -29,18 +57,28 @@ export const initDb = async () => {
         active BOOLEAN DEFAULT 1
       )
     `);
-    await db.run("INSERT INTO users (id, username, password, role, active) SELECT id, username, password, role, active FROM users_old");
+    await db.run(
+      "INSERT INTO users (id, username, password, role, active) SELECT id, username, password, role, active FROM users_old",
+    );
     await db.run("DROP TABLE users_old");
     await db.run("PRAGMA foreign_keys=ON");
     console.log("Users table migrated.");
   }
 
   // Check if tickets table needs migration for 'outros' type
-  const ticketsTable = await db.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'");
+  const ticketsTable = await db.get(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'",
+  );
   if (ticketsTable && !ticketsTable.sql.includes("'outros'")) {
     console.log("Migrating tickets table to support 'outros' type...");
+
+    // Get existing columns
+    const columns = await db.all("PRAGMA table_info(tickets)");
+    const columnNames = columns.map((c: any) => c.name);
+
     await db.run("PRAGMA foreign_keys=OFF");
     await db.run("ALTER TABLE tickets RENAME TO tickets_old");
+
     await db.run(`
       CREATE TABLE tickets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,28 +103,47 @@ export const initDb = async () => {
         FOREIGN KEY(called_by_user_id) REFERENCES users(id)
       )
     `);
-    
-    // Copy data - handle potential missing columns in old table by selecting common columns explicitly
-    // Assuming old table might not have subtype, queue_sector, etc. if very old, but we just added them via migrations
-    // If we just ran migrations, the columns exist in tickets_old (which was tickets a moment ago).
-    // However, if the old schema had a CHECK constraint, we need to be careful.
-    // The previous migrations added columns to the table. So tickets_old SHOULD have them.
-    
-    await db.run(`
-      INSERT INTO tickets (
-        id, number, doctor_id, type, subtype, queue_sector, status, 
-        workstation_id, called_by_user_id, created_at, called_at, 
-        started_at, finished_at, requeued_at, requeue_count, 
-        call_type, is_specific_call
-      ) 
-      SELECT 
-        id, number, doctor_id, type, subtype, queue_sector, status, 
-        workstation_id, called_by_user_id, created_at, called_at, 
-        started_at, finished_at, requeued_at, requeue_count, 
-        call_type, is_specific_call
-      FROM tickets_old
-    `);
-    
+
+    // Prepare column mapping for INSERT
+    const newColumns = [
+      "id",
+      "number",
+      "doctor_id",
+      "type",
+      "subtype",
+      "queue_sector",
+      "status",
+      "workstation_id",
+      "called_by_user_id",
+      "created_at",
+      "called_at",
+      "started_at",
+      "finished_at",
+      "requeued_at",
+      "requeue_count",
+      "call_type",
+      "is_specific_call",
+    ];
+
+    const selectColumns = newColumns.map((col) => {
+      if (columnNames.includes(col)) {
+        return col;
+      } else {
+        // Default values for new columns
+        if (col === "queue_sector") return "'recepcao'";
+        if (col === "requeue_count") return "0";
+        if (col === "is_specific_call") return "0";
+        return "NULL";
+      }
+    });
+
+    const insertSql = `
+      INSERT INTO tickets (${newColumns.join(", ")}) 
+      SELECT ${selectColumns.join(", ")} FROM tickets_old
+    `;
+
+    await db.run(insertSql);
+
     await db.run("DROP TABLE tickets_old");
     await db.run("PRAGMA foreign_keys=ON");
     console.log("Tickets table migrated.");
@@ -144,43 +201,39 @@ export const initDb = async () => {
 
   // Migrations: Add new columns if they don't exist
   console.log("Running migrations...");
-  try {
-      await db.run("ALTER TABLE tickets ADD COLUMN requeued_at DATETIME");
-      console.log("Migration: Added requeued_at");
-  } catch (e: any) {
-      console.log("Migration skipped (requeued_at):", e.message);
+
+  const ticketColumns = await db.all("PRAGMA table_info(tickets)");
+  const ticketColumnNames = ticketColumns.map((c: any) => c.name);
+
+  if (!ticketColumnNames.includes("requeued_at")) {
+    await db.run("ALTER TABLE tickets ADD COLUMN requeued_at DATETIME");
+    console.log("Migration: Added requeued_at");
   }
 
-  try {
-      await db.run("ALTER TABLE tickets ADD COLUMN requeue_count INTEGER DEFAULT 0");
-      console.log("Migration: Added requeue_count");
-  } catch (e: any) {
-      console.log("Migration skipped (requeue_count):", e.message);
+  if (!ticketColumnNames.includes("requeue_count")) {
+    await db.run(
+      "ALTER TABLE tickets ADD COLUMN requeue_count INTEGER DEFAULT 0",
+    );
+    console.log("Migration: Added requeue_count");
   }
 
-  try {
-      await db.run("ALTER TABLE tickets ADD COLUMN is_specific_call BOOLEAN DEFAULT 0");
-      console.log("Migration: Added is_specific_call column");
-  } catch (e: any) {
-      if (!e.message.includes("duplicate column")) {
-           console.error("Migration error (is_specific_call):", e);
-      } else {
-           console.log("Migration skipped (is_specific_call): duplicate column");
-      }
+  if (!ticketColumnNames.includes("is_specific_call")) {
+    await db.run(
+      "ALTER TABLE tickets ADD COLUMN is_specific_call BOOLEAN DEFAULT 0",
+    );
+    console.log("Migration: Added is_specific_call column");
   }
 
-  try {
-      await db.run("ALTER TABLE tickets ADD COLUMN subtype TEXT");
-      console.log("Migration: Added subtype");
-  } catch (e: any) {
-      console.log("Migration skipped (subtype):", e.message);
+  if (!ticketColumnNames.includes("subtype")) {
+    await db.run("ALTER TABLE tickets ADD COLUMN subtype TEXT");
+    console.log("Migration: Added subtype");
   }
 
-  try {
-      await db.run("ALTER TABLE tickets ADD COLUMN queue_sector TEXT NOT NULL DEFAULT 'recepcao'");
-      console.log("Migration: Added queue_sector");
-  } catch (e: any) {
-      console.log("Migration skipped (queue_sector):", e.message);
+  if (!ticketColumnNames.includes("queue_sector")) {
+    await db.run(
+      "ALTER TABLE tickets ADD COLUMN queue_sector TEXT NOT NULL DEFAULT 'recepcao'",
+    );
+    console.log("Migration: Added queue_sector");
   }
 
   // Seed initial data if empty
@@ -222,7 +275,9 @@ export const initDb = async () => {
   }
 
   // Ensure RET01 exists (Retirada de Senhas)
-  const ret01Check = await db.get("SELECT * FROM workstations WHERE code = 'RET01'");
+  const ret01Check = await db.get(
+    "SELECT * FROM workstations WHERE code = 'RET01'",
+  );
   if (!ret01Check) {
     await db.run(
       "INSERT INTO workstations (code, name) VALUES ('RET01', 'Retirada de Senhas')",
@@ -231,7 +286,9 @@ export const initDb = async () => {
   }
 
   // Ensure CIR01 exists (Posto Cirurgia)
-  const cir01Check = await db.get("SELECT * FROM workstations WHERE code = 'CIR01'");
+  const cir01Check = await db.get(
+    "SELECT * FROM workstations WHERE code = 'CIR01'",
+  );
   if (!cir01Check) {
     await db.run(
       "INSERT INTO workstations (code, name) VALUES ('CIR01', 'Posto Cirurgia')",
@@ -240,30 +297,37 @@ export const initDb = async () => {
   }
 
   // Ensure 'totem' user exists for auto-login
-  const totemUser = await db.get("SELECT * FROM users WHERE username = 'totem'");
+  const totemUser = await db.get(
+    "SELECT * FROM users WHERE username = 'totem'",
+  );
   if (!totemUser) {
     const totemHash = await bcrypt.hash("totem", 10);
     await db.run(
       "INSERT INTO users (username, password, role) VALUES ('totem', ?, 'attendant')",
-      [totemHash]
+      [totemHash],
     );
     console.log("Created special user: totem");
   }
 
   // Ensure 'agendamento_cirurgico' user exists
-  const cirurgiaUser = await db.get("SELECT * FROM users WHERE username = 'agendamento_cirurgico'");
+  const cirurgiaUser = await db.get(
+    "SELECT * FROM users WHERE username = 'agendamento_cirurgico'",
+  );
   if (!cirurgiaUser) {
     const cirurgiaHash = await bcrypt.hash("123456", 10); // Password from guide/request if specified, or default
     try {
       await db.run(
         "INSERT INTO users (username, password, role) VALUES ('agendamento_cirurgico', ?, 'cirurgia')",
-        [cirurgiaHash]
+        [cirurgiaHash],
       );
       console.log("Created special user: agendamento_cirurgico");
     } catch (e: any) {
-       console.error("Failed to create agendamento_cirurgico user (possibly due to CHECK constraint on old DB):", e.message);
-       // Fallback: try to create as attendant if cirurgia fails? No, that would break logic.
-       // We'll leave the error log.
+      console.error(
+        "Failed to create agendamento_cirurgico user (possibly due to CHECK constraint on old DB):",
+        e.message,
+      );
+      // Fallback: try to create as attendant if cirurgia fails? No, that would break logic.
+      // We'll leave the error log.
     }
   }
 
