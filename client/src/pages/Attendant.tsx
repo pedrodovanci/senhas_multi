@@ -17,7 +17,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { API_URL } from "../config";
+import { apiFetch } from "../utils/api";
 import Logo from "../components/Logo";
 import DoctorQueueGrid from "../components/DoctorQueueGrid";
 import { HistoryModal } from "../components/HistoryModal";
@@ -147,6 +147,10 @@ const Attendant: React.FC = () => {
       socketContext.on("ticket:finished", handleFinished);
       socketContext.on("ticket:missed", handleUpdated);
       socketContext.on("ticket:requeued", handleRequeued);
+      const handleReconnected = () => {
+        fetchData();
+      };
+      socketContext.on("ws:reconnected", handleReconnected);
 
       return () => {
         socketContext.off("ticket:created", handleCreated);
@@ -156,17 +160,16 @@ const Attendant: React.FC = () => {
         socketContext.off("ticket:finished", handleFinished);
         socketContext.off("ticket:missed", handleUpdated);
         socketContext.off("ticket:requeued", handleRequeued);
+        socketContext.off("ws:reconnected", handleReconnected);
       };
     }
   }, [socketContext, user, navigate, currentTicket, workstation]);
 
   const fetchData = async () => {
     try {
-      const ticketsRes = await fetch(
-        `${API_URL}/api/tickets?status=waiting&queue_sector=${queueSector}`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        },
+      const ticketsRes = await apiFetch(
+        `/api/tickets?status=waiting&queue_sector=${queueSector}`,
+        { token, onUnauthorized: logout },
       );
       const ticketsData = await ticketsRes.json();
       if (Array.isArray(ticketsData)) {
@@ -176,9 +179,10 @@ const Attendant: React.FC = () => {
         setTickets([]);
       }
 
-      const myActiveRes = await fetch(`${API_URL}/api/tickets?queue_sector=${queueSector}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }); // Get all to find mine
+      const myActiveRes = await apiFetch(`/api/tickets?queue_sector=${queueSector}`, {
+        token,
+        onUnauthorized: logout,
+      });
       const allTickets = await myActiveRes.json();
 
       if (Array.isArray(allTickets)) {
@@ -205,12 +209,10 @@ const Attendant: React.FC = () => {
 
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/tickets/call-next`, {
+      const res = await apiFetch(`/api/tickets/call-next`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        token,
+        onUnauthorized: logout,
         body: JSON.stringify({
           workstation_id: workstation?.id,
           user_id: user?.id,
@@ -250,14 +252,12 @@ const Attendant: React.FC = () => {
 
     setLoading(true);
     try {
-      const res = await fetch(
-        `${API_URL}/api/tickets/call-specific`,
+      const res = await apiFetch(
+        `/api/tickets/call-specific`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
+          token,
+          onUnauthorized: logout,
           body: JSON.stringify({
             workstation_id: workstation?.id,
             user_id: user?.id,
@@ -287,11 +287,12 @@ const Attendant: React.FC = () => {
 
     setLoading(true);
     try {
-      const res = await fetch(
-        `${API_URL}/api/tickets/${currentTicket.id}/recall`,
+      const res = await apiFetch(
+        `/api/tickets/${currentTicket.id}/recall`,
         {
           method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
+          token,
+          onUnauthorized: logout,
         },
       );
 
@@ -313,14 +314,12 @@ const Attendant: React.FC = () => {
 
     setLoading(true);
     try {
-      const res = await fetch(
-        `${API_URL}/api/tickets/${currentTicket.id}/status`,
+      const res = await apiFetch(
+        `/api/tickets/${currentTicket.id}/status`,
         {
           method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
+          token,
+          onUnauthorized: logout,
           body: JSON.stringify({ status }),
         },
       );

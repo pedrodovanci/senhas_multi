@@ -174,7 +174,8 @@ export const initDb = async () => {
     CREATE TABLE IF NOT EXISTS doctors (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT,
-      specialization TEXT
+      specialization TEXT,
+      prefix TEXT
     );
 
     -- TICKETS (Senhas)
@@ -234,6 +235,72 @@ export const initDb = async () => {
       "ALTER TABLE tickets ADD COLUMN queue_sector TEXT NOT NULL DEFAULT 'recepcao'",
     );
     console.log("Migration: Added queue_sector");
+  }
+
+  const doctorColumns = await db.all("PRAGMA table_info(doctors)");
+  const doctorColumnNames = doctorColumns.map((c: any) => c.name);
+
+  if (!doctorColumnNames.includes("prefix")) {
+    await db.run("ALTER TABLE doctors ADD COLUMN prefix TEXT");
+    console.log("Migration: Added doctors.prefix");
+  }
+
+  const reservedPrefixes = new Set(["AC", "AP", "C", "O"]);
+  const normalizePrefix = (value: string) =>
+    value
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 4);
+
+  const proposePrefix = (name: string) => {
+    const cleaned = name
+      .toUpperCase()
+      .replace(/\b(dr|dra|doutor|doutora)\b\.?/g, "")
+      .replace(/[^A-Z0-9\s]/g, " ")
+      .trim();
+    const parts = cleaned.split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return "dr";
+    const first = parts[0];
+    const last = parts.length > 1 ? parts[parts.length - 1] : parts[0];
+    const initials = normalizePrefix(`${first[0] ?? ""}${last[0] ?? ""}`);
+    const firstTwo = normalizePrefix(first.slice(0, 2));
+    const lastTwo = normalizePrefix(last.slice(0, 2));
+    const firstLast3 = normalizePrefix(`${first[0] ?? ""}${last.slice(0, 2)}`);
+    return [initials, firstLast3, lastTwo, firstTwo].find(Boolean) || "dr";
+  };
+
+  const existingDoctors = await db.all("SELECT id, name, prefix FROM doctors");
+  const used = new Set<string>(
+    existingDoctors
+      .map((d: any) => (d.prefix ? normalizePrefix(String(d.prefix)) : ""))
+      .filter(Boolean),
+  );
+
+  for (const doc of existingDoctors) {
+    const current = doc.prefix ? normalizePrefix(String(doc.prefix)) : "";
+    if (current && !reservedPrefixes.has(current)) continue;
+
+    let candidate = proposePrefix(String(doc.name || ""));
+    if (reservedPrefixes.has(candidate) || !candidate) {
+      candidate = normalizePrefix(String(doc.name || "").slice(0, 2)) || "dr";
+    }
+
+    if (reservedPrefixes.has(candidate) || candidate.length < 2) {
+      candidate = "DR";
+    }
+
+    let finalPrefix = candidate;
+    const base = candidate;
+    for (let i = 1; i <= 20 && (reservedPrefixes.has(finalPrefix) || used.has(finalPrefix)); i++) {
+      finalPrefix = normalizePrefix(`${base}${i}`);
+    }
+
+    if (!finalPrefix || reservedPrefixes.has(finalPrefix) || used.has(finalPrefix)) {
+      finalPrefix = normalizePrefix(`D${doc.id}`) || `D${doc.id}`;
+    }
+
+    await db.run("UPDATE doctors SET prefix = ? WHERE id = ?", [finalPrefix, doc.id]);
+    used.add(finalPrefix);
   }
 
   // Seed initial data if empty
@@ -334,10 +401,10 @@ export const initDb = async () => {
   const docCount = await db.get("SELECT count(*) as count FROM doctors");
   if (docCount.count === 0) {
     await db.exec(`
-      INSERT INTO doctors (name, specialization) VALUES ('Dr. João Silva', 'Neurologia');
-      INSERT INTO doctors (name, specialization) VALUES ('Dra. Maria Souza', 'Neurocirurgia');
-      INSERT INTO doctors (name, specialization) VALUES ('Dr. Carlos Rocha', 'Ortopedia');
-      INSERT INTO doctors (name, specialization) VALUES ('Dr. Ana Costa', 'Cirurgia Geral');
+      INSERT INTO doctors (name, specialization, prefix) VALUES ('Dr. João Silva', 'Neurologia', 'JS');
+      INSERT INTO doctors (name, specialization, prefix) VALUES ('Dra. Maria Souza', 'Neurocirurgia', 'MS');
+      INSERT INTO doctors (name, specialization, prefix) VALUES ('Dr. Carlos Rocha', 'Ortopedia', 'CR');
+      INSERT INTO doctors (name, specialization, prefix) VALUES ('Dr. Ana Costa', 'Cirurgia Geral', 'AN');
     `);
   }
 

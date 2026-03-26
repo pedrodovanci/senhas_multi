@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
-import { API_URL } from "../config";
+import { apiFetch } from "../utils/api";
 import {
   LayoutDashboard,
   LogOut,
@@ -52,11 +52,23 @@ const Admin: React.FC = () => {
     }
 
     const fetchStats = () => {
-      fetch(`${API_URL}/api/stats`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-        .then((res) => res.json())
-        .then((data) => setStats(data))
+      apiFetch(`/api/stats`)
+        .then((res) => {
+          if (!res.ok) throw new Error("Failed to fetch stats");
+          return res.json();
+        })
+        .then((data) => {
+          setStats({
+            total: data.total || 0,
+            waiting: data.waiting || 0,
+            attended: data.attended || 0,
+            avgWaitTimeMinutes: data.avgWaitTimeMinutes || 0,
+            ranking: data.ranking || [],
+            avgServiceTime: data.avgServiceTime || [],
+            byType: data.byType || [],
+            missed: data.missed || 0,
+          });
+        })
         .catch((err) => console.error("Error fetching stats:", err));
     };
 

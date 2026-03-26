@@ -1,11 +1,13 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import { WS_URL } from '../config';
+import { useAuth } from './AuthContext';
 
 // Define the interface for the context
 interface SocketContextType {
   socket: WebSocket | null;
   on: <T>(event: string, callback: (data: T) => void) => void;
   off: <T>(event: string, callback: (data: T) => void) => void;
+  isConnected: boolean;
 }
 
 const SocketContext = createContext<SocketContextType | null>(null);
@@ -13,10 +15,13 @@ const SocketContext = createContext<SocketContextType | null>(null);
 export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [socket, setSocket] = useState<WebSocket | null>(null);
   const [listeners] = useState(new Map<string, Array<(data: unknown) => void>>());
+  const [isConnected, setIsConnected] = useState(false);
+  const auth = useAuth();
 
   useEffect(() => {
     let ws: WebSocket;
     let reconnectInterval: ReturnType<typeof setTimeout> | null = null;
+    let isFirst = true;
 
     const connect = () => {
       ws = new WebSocket(WS_URL);
@@ -24,6 +29,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       ws.onopen = () => {
         console.log('Connected to WebSocket');
         setSocket(ws);
+        setIsConnected(true);
+        const wsData = auth.workstation;
+        const token = auth.token;
+        if (ws && token && wsData) {
+          ws.send(JSON.stringify({ type: 'auth', token, workstation_id: wsData.id }));
+        }
+        if (!isFirst) {
+          const callbacks = listeners.get('ws:reconnected');
+          callbacks?.forEach(cb => cb(undefined));
+        }
+        isFirst = false;
       };
 
       ws.onmessage = (event: MessageEvent<string>) => {
@@ -42,6 +58,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       ws.onclose = () => {
         console.log('Disconnected from WebSocket');
         setSocket(null);
+        setIsConnected(false);
         reconnectInterval = setTimeout(connect, 3000);
       };
 
@@ -57,7 +74,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (ws) ws.close();
       if (reconnectInterval) clearTimeout(reconnectInterval);
     };
-  }, [listeners]);
+  }, [listeners, auth.user, auth.workstation, auth.token]);
 
   const on = useCallback(<T,>(event: string, callback: (data: T) => void) => {
     if (!listeners.has(event)) {
@@ -76,7 +93,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [listeners]);
 
-  const value = useMemo(() => ({ socket, on, off }), [socket, on, off]);
+  const value = useMemo(() => ({ socket, on, off, isConnected }), [socket, on, off, isConnected]);
 
   return (
     <SocketContext.Provider value={value}>

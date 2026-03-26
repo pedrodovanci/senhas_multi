@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { API_URL } from '../config';
 import type { Workstation } from '../types';
 import { User as UserIcon, Lock, Monitor, ArrowRight } from 'lucide-react';
+import { apiFetch } from '../utils/api';
 
 const Login: React.FC = () => {
   const [username, setUsername] = useState('');
@@ -17,7 +17,7 @@ const Login: React.FC = () => {
   const isRetirada = !!selectedWs && (selectedWs.code === 'RET01' || selectedWs.name.toLowerCase().includes('retirada'));
 
   useEffect(() => {
-    fetch(`${API_URL}/api/workstations`)
+    apiFetch(`/api/workstations`)
       .then(res => res.json())
       .then(data => setWorkstations(data));
   }, []);
@@ -31,9 +31,8 @@ const Login: React.FC = () => {
           return;
         }
 
-        const res = await fetch(`${API_URL}/api/totem-login`, {
+        const res = await apiFetch(`/api/totem-login`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ workstation_id: workstationId })
         });
         const data = await res.json();
@@ -50,9 +49,8 @@ const Login: React.FC = () => {
       const body: { username: string; password: string; workstation_id?: string } = { username, password };
       if (workstationId) body.workstation_id = workstationId;
 
-      const res = await fetch(`${API_URL}/api/login`, {
+      const res = await apiFetch(`/api/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
       const data = await res.json();
@@ -99,9 +97,14 @@ const Login: React.FC = () => {
                 className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary focus:border-primary"
               >
                 <option value="">Selecione seu Guichê/Sala</option>
-                {workstations.map(ws => (
-                  <option key={ws.id} value={ws.id}>{ws.name}</option>
-                ))}
+                {workstations.map(ws => {
+                  const occupied = !!ws.current_user_id && ws.code !== 'RET01';
+                  return (
+                    <option key={ws.id} value={ws.id} disabled={occupied}>
+                      {ws.name}{occupied ? ' (ocupado)' : ''}
+                    </option>
+                  );
+                })}
               </select>
             </div>
           </div>

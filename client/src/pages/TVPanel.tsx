@@ -3,7 +3,9 @@ import { useSocket } from "../contexts/SocketContext";
 import { useSearchParams } from "react-router-dom";
 import type { Ticket } from "../types";
 import { Monitor } from "lucide-react";
+import { apiFetch } from "../utils/api";
 import { API_URL } from "../config";
+import ConnectionStatus from "../components/ConnectionStatus";
 import QueueLayout from "../components/QueueLayout";
 
 const TVPanel: React.FC = () => {
@@ -14,6 +16,7 @@ const TVPanel: React.FC = () => {
   const socketContext = useSocket();
   const [currentTicket, setCurrentTicket] = useState<Ticket | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
 
   // Clock
@@ -24,21 +27,20 @@ const TVPanel: React.FC = () => {
 
   // Initialize audio and fetch initial state
   useEffect(() => {
-    // Using a reliable beep sound
-    audioRef.current = new Audio(
-      "https://actions.google.com/sounds/v1/alarms/beep_short.ogg",
-    );
+    const src = `${API_URL}/assets/audio/alert.mp3?v=${Date.now()}`;
+    const audio = new Audio(src);
+    audio.preload = "auto";
+    audio.addEventListener("error", () => {
+      console.error("Falha ao carregar áudio:", src);
+    });
+    audioRef.current = audio;
 
     const fetchState = async () => {
       try {
-        // Fetch history first
-        const histRes = await fetch(
-          `${API_URL}/api/tickets/history`,
-        );
+        const histRes = await apiFetch(`/api/tickets/history`);
         const histData: Ticket[] = await histRes.json();
 
         if (histData.length > 0) {
-          // The most recent one is the current one being displayed
           const current = histData[0];
           setCurrentTicket(current);
         }
@@ -71,13 +73,37 @@ const TVPanel: React.FC = () => {
       };
 
       socketContext.on("ticket:calling", handleCalling);
-      // REMOVED: ticket:started and ticket:finished — TV only displays calls
+      const handleReconnected = () => {
+        apiFetch(`/api/tickets/history`)
+          .then(r => r.json())
+          .then((d: Ticket[]) => {
+            if (Array.isArray(d) && d.length > 0) setCurrentTicket(d[0]);
+          })
+          .catch(() => {});
+      };
+      socketContext.on("ws:reconnected", handleReconnected);
 
       return () => {
         socketContext.off("ticket:calling", handleCalling);
+        socketContext.off("ws:reconnected", handleReconnected);
       };
     }
   }, [socketContext, filterType, filterDoctor]);
+
+  const unlockAudio = () => {
+    if (audioRef.current) {
+      audioRef.current
+        .play()
+        .then(() => {
+          if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.currentTime = 0;
+          }
+          setAudioUnlocked(true);
+        })
+        .catch(() => {});
+    }
+  };
 
   const headerContent = (
     <div className="flex justify-between items-center w-full h-full px-8">
@@ -112,6 +138,15 @@ const TVPanel: React.FC = () => {
 
   return (
     <QueueLayout headerContent={headerContent}>
+      {!audioUnlocked && (
+        <button
+          onClick={unlockAudio}
+          className="fixed top-4 right-4 z-50 flex items-center gap-2 bg-yellow-400 text-yellow-900 px-4 py-2 rounded-full shadow-lg font-bold text-sm"
+        >
+          🔇 Clique para ativar o som
+        </button>
+      )}
+      <ConnectionStatus />
       <div
         style={{
           position: "absolute",

@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
-import { API_URL } from "../config";
+import { apiFetch } from "../utils/api";
 
 const Reception: React.FC = () => {
   const { token, logout } = useAuth();
@@ -42,15 +42,11 @@ const Reception: React.FC = () => {
       return;
     }
 
-    fetch(`${API_URL}/api/doctors`, {
-      headers: { Authorization: `Bearer ${token}` },
+    apiFetch(`/api/doctors`, {
+      token,
+      onUnauthorized: logout,
     })
       .then((res) => {
-        if (res.status === 401) {
-          logout();
-          navigate("/login");
-          return null;
-        }
         return res.json();
       })
       .then((data) => {
@@ -61,11 +57,12 @@ const Reception: React.FC = () => {
   const generateTicket = async (doctorId: number | null, subtype?: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/tickets`, {
+      const res = await apiFetch(`/api/tickets`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+        token,
+        onUnauthorized: () => {
+          logout();
+          navigate("/login");
         },
         body: JSON.stringify({
           doctor_id: doctorId,
@@ -73,13 +70,6 @@ const Reception: React.FC = () => {
           ...(subtype && { subtype }),
         }),
       });
-
-      if (res.status === 401) {
-        alert("Sessão expirada. Por favor, faça login novamente.");
-        logout();
-        navigate("/login");
-        return;
-      }
 
       if (!res.ok) {
         throw new Error("Falha na requisição");

@@ -17,6 +17,7 @@ export interface Doctor {
   id: number;
   name: string;
   specialization: string;
+  prefix?: string | null;
 }
 
 export interface Ticket {

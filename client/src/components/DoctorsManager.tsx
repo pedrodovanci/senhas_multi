@@ -10,7 +10,11 @@ export const DoctorsManager: React.FC = () => {
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDoctor, setEditingDoctor] = useState<Doctor | null>(null);
-  const [formData, setFormData] = useState({ name: "", specialization: "" });
+  const [formData, setFormData] = useState({
+    name: "",
+    specialization: "",
+    prefix: "",
+  });
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -79,10 +83,14 @@ export const DoctorsManager: React.FC = () => {
   const openModal = (doctor?: Doctor) => {
     if (doctor) {
       setEditingDoctor(doctor);
-      setFormData({ name: doctor.name, specialization: doctor.specialization });
+      setFormData({
+        name: doctor.name,
+        specialization: doctor.specialization,
+        prefix: doctor.prefix || "",
+      });
     } else {
       setEditingDoctor(null);
-      setFormData({ name: "", specialization: "" });
+      setFormData({ name: "", specialization: "", prefix: "" });
     }
     setIsModalOpen(true);
   };
@@ -90,7 +98,7 @@ export const DoctorsManager: React.FC = () => {
   const closeModal = () => {
     setIsModalOpen(false);
     setEditingDoctor(null);
-    setFormData({ name: "", specialization: "" });
+    setFormData({ name: "", specialization: "", prefix: "" });
   };
 
   return (
@@ -111,6 +119,9 @@ export const DoctorsManager: React.FC = () => {
             <tr>
               <th className="p-4 text-sm font-semibold text-gray-600">Nome</th>
               <th className="p-4 text-sm font-semibold text-gray-600">
+                Prefixo
+              </th>
+              <th className="p-4 text-sm font-semibold text-gray-600">
                 Especialidade
               </th>
               <th className="p-4 text-sm font-semibold text-gray-600 text-right">
@@ -125,6 +136,9 @@ export const DoctorsManager: React.FC = () => {
                 className="border-b border-gray-50 hover:bg-gray-50 transition-colors"
               >
                 <td className="p-4 font-medium text-gray-800">{doctor.name}</td>
+                <td className="p-4 font-mono text-gray-800">
+                  {(doctor.prefix || "").toUpperCase()}
+                </td>
                 <td className="p-4 text-gray-600">{doctor.specialization}</td>
                 <td className="p-4 flex justify-end gap-2">
                   <button
@@ -144,7 +158,7 @@ export const DoctorsManager: React.FC = () => {
             ))}
             {doctors.length === 0 && (
               <tr>
-                <td colSpan={3} className="p-8 text-center text-gray-400">
+                <td colSpan={4} className="p-8 text-center text-gray-400">
                   Nenhum médico cadastrado.
                 </td>
               </tr>
@@ -169,6 +183,23 @@ export const DoctorsManager: React.FC = () => {
               value={formData.name}
               onChange={(e) =>
                 setFormData({ ...formData, name: e.target.value })
+              }
+              className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Prefixo (2–4 caracteres)
+            </label>
+            <input
+              type="text"
+              required
+              value={formData.prefix}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  prefix: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""),
+                })
               }
               className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
             />
