@@ -1,4 +1,4 @@
-# Sistema de Gerenciamento de Atendimento (SGA)
+# Senhas Multi
 
 Este é um sistema completo de gerenciamento de filas e atendimento, composto por um backend em Node.js e um frontend em React. O sistema suporta emissão de senhas, chamadas por painel de TV, terminais de atendimento e administração.
 
