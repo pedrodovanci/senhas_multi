@@ -3,10 +3,10 @@ import type { Doctor } from "../types";
 import { BaseModal } from "./BaseModal";
 import { Edit, Trash, Plus } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
-import { API_URL } from "../config";
+import { apiFetch } from "../utils/api";
 
 export const DoctorsManager: React.FC = () => {
-  const { token } = useAuth();
+  const { token, logout } = useAuth();
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDoctor, setEditingDoctor] = useState<Doctor | null>(null);
@@ -23,11 +23,15 @@ export const DoctorsManager: React.FC = () => {
 
   const fetchDoctors = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/doctors`, {
-        headers: { Authorization: `Bearer ${token}` }
+      const res = await apiFetch(`/api/doctors`, {
+        token,
+        onUnauthorized: logout,
       });
+      if (!res.ok) {
+        throw new Error("Falha ao carregar médicos");
+      }
       const data = await res.json();
-      setDoctors(data);
+      setDoctors(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error(err);
     }
@@ -38,25 +42,35 @@ export const DoctorsManager: React.FC = () => {
     setLoading(true);
     try {
       if (editingDoctor) {
-        await fetch(`${API_URL}/api/doctors/${editingDoctor.id}`, {
+        const res = await apiFetch(`/api/doctors/${editingDoctor.id}`, {
+          token,
+          onUnauthorized: logout,
           method: "PUT",
-          headers: { 
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`
-          },
           body: JSON.stringify(formData),
         });
+        if (!res.ok) {
+          const data = await res.json().catch(() => null);
+          const message =
+            data?.error || data?.message || "Erro ao salvar médico";
+          alert(message);
+          return;
+        }
       } else {
-        await fetch(`${API_URL}/api/doctors`, {
+        const res = await apiFetch(`/api/doctors`, {
+          token,
+          onUnauthorized: logout,
           method: "POST",
-          headers: { 
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`
-          },
           body: JSON.stringify(formData),
         });
+        if (!res.ok) {
+          const data = await res.json().catch(() => null);
+          const message =
+            data?.error || data?.message || "Erro ao salvar médico";
+          alert(message);
+          return;
+        }
       }
-      fetchDoctors();
+      await fetchDoctors();
       closeModal();
     } catch (error) {
       console.error(error);
@@ -69,11 +83,18 @@ export const DoctorsManager: React.FC = () => {
   const handleDelete = async (id: number) => {
     if (!confirm("Tem certeza que deseja excluir este médico?")) return;
     try {
-      await fetch(`${API_URL}/api/doctors/${id}`, {
+      const res = await apiFetch(`/api/doctors/${id}`, {
+        token,
+        onUnauthorized: logout,
         method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` }
       });
-      fetchDoctors();
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        const message = data?.error || data?.message || "Erro ao excluir médico";
+        alert(message);
+        return;
+      }
+      await fetchDoctors();
     } catch (error) {
       console.error(error);
       alert("Erro ao excluir médico");

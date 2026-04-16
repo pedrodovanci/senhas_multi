@@ -11,11 +11,13 @@ import {
   PieChart,
   AlertTriangle,
   Users,
+  Monitor,
   // Stethoscope,
 } from "lucide-react";
 import Logo from "../components/Logo";
 import { DoctorsManager } from "../components/DoctorsManager";
 import { UsersManager } from "../components/UsersManager";
+import { WorkstationsManager } from "../components/WorkstationsManager";
 
 interface Stats {
   total: number;
@@ -31,9 +33,9 @@ interface Stats {
 const Admin: React.FC = () => {
   const { user, token, logout } = useAuth();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<"dashboard" | "doctors" | "users">(
-    "dashboard",
-  );
+  const [activeTab, setActiveTab] = useState<
+    "dashboard" | "doctors" | "users" | "workstations"
+  >("dashboard");
   const [stats, setStats] = useState<Stats>({
     total: 0,
     waiting: 0,
@@ -104,6 +106,12 @@ const Admin: React.FC = () => {
           >
             <Users size={20} /> Usuários
           </button>
+          <button
+            onClick={() => setActiveTab("workstations")}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-colors ${activeTab === "workstations" ? "bg-blue-50 text-primary" : "text-gray-600 hover:bg-gray-50"}`}
+          >
+            <Monitor size={20} /> Guichês
+          </button>
         </nav>
         <div className="p-4 border-t border-gray-200">
           <button
@@ -124,7 +132,9 @@ const Admin: React.FC = () => {
                 ? "Visão Geral"
                 : activeTab === "doctors"
                   ? "Médicos"
-                  : "Usuários"}
+                  : activeTab === "users"
+                    ? "Usuários"
+                    : "Guichês"}
             </h2>
             <p className="text-gray-500">Bem-vindo, {user?.username}</p>
           </div>
@@ -302,6 +312,7 @@ const Admin: React.FC = () => {
 
         {activeTab === "doctors" && <DoctorsManager />}
         {activeTab === "users" && <UsersManager />}
+        {activeTab === "workstations" && <WorkstationsManager />}
       </main>
     </div>
   );

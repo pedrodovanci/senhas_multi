@@ -417,9 +417,11 @@ const Attendant: React.FC = () => {
               )}
             </div>
             {currentTicket.status === "in_attendance" &&
-              currentTicket.started_at && (
+              (currentTicket.started_at || currentTicket.called_at) && (
                 <div className="ml-4 pl-4 border-l border-gray-600">
-                  <TicketTimer startTime={currentTicket.started_at} />
+                  <TicketTimer
+                    startTime={currentTicket.started_at ?? currentTicket.called_at!}
+                  />
                 </div>
               )}
           </div>

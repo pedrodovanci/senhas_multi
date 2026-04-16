@@ -7,4 +7,6 @@ dist
 *.sqlite-wal
 *.zip
 .env
+.env.*
+print-agent/config.json
 .vscode

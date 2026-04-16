@@ -5,6 +5,8 @@ import cors from "cors";
 import bcrypt from "bcrypt";
 import fs from "fs";
 import path from "path";
+import net from "net";
+import dotenv from "dotenv";
 import { initDb } from "./database";
 import jwt from "jsonwebtoken";
 import {
@@ -14,12 +16,35 @@ import {
   AuthRequest,
 } from "./middleware/auth";
 
+dotenv.config();
+
 const app = express();
 const httpServer = createServer(app);
 const wss = new WebSocketServer({ server: httpServer });
 
-// Initialize Printer
-// Printer logic removed as it's now handled by the client
+const PRINT_DEDUPE_WINDOW_MS = 5000;
+const recentPrints = new Map<string, number>();
+
+const shouldPrintTicket = (ticket: any) => {
+  const key = String(ticket?.id ?? ticket?.number ?? "");
+  if (!key) return true;
+
+  const now = Date.now();
+  const last = recentPrints.get(key);
+  if (typeof last === "number" && now - last < PRINT_DEDUPE_WINDOW_MS) {
+    return false;
+  }
+
+  recentPrints.set(key, now);
+
+  for (const [k, ts] of recentPrints.entries()) {
+    if (now - ts > PRINT_DEDUPE_WINDOW_MS * 10) {
+      recentPrints.delete(k);
+    }
+  }
+
+  return true;
+};
 
 app.use(cors());
 app.use(express.json());
@@ -36,13 +61,141 @@ const dayRangeUTC3 = () => {
   return { start: toSql(startUTC3), end: toSql(endUTC3) };
 };
 
-const RESERVED_TICKET_PREFIXES = new Set(["AC", "AP", "C", "O"]);
+const toIsoUtc = (raw: unknown) => {
+  if (!raw) return raw;
+  if (typeof raw !== "string") return raw;
+  if (raw.includes("T")) return raw;
+  return raw.replace(" ", "T") + ".000Z";
+};
+
+const RESERVED_TICKET_PREFIXES = new Set(["AC", "APO", "C", "O"]);
 
 const normalizeDoctorPrefix = (value: unknown) => {
   if (typeof value !== "string") return null;
   const normalized = value.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (normalized.length < 2 || normalized.length > 4) return null;
   if (RESERVED_TICKET_PREFIXES.has(normalized)) return null;
+  return normalized;
+};
+
+const getPrinterConfig = () => {
+  const host = process.env.PRINTER_HOST;
+  if (!host) return null;
+
+  const enabledRaw = String(process.env.PRINTER_ENABLED ?? "true").toLowerCase();
+  const enabled = ["1", "true", "yes", "on"].includes(enabledRaw);
+  if (!enabled) return null;
+
+  const port = Number(process.env.PRINTER_PORT ?? 9100);
+  if (!Number.isFinite(port) || port <= 0) return null;
+
+  return { host, port };
+};
+
+const formatTicketLabel = (ticket: any) => {
+  const label = ticket?.subtype
+    ? String(ticket.subtype).replace(/_/g, " ")
+    : String(ticket?.type || "consulta");
+  return label.toUpperCase();
+};
+
+const buildEscPosPayload = (ticket: any) => {
+  const now = new Date().toLocaleString("pt-BR");
+  const sep = "--------------------------------";
+  const parts: Array<string | Buffer> = [];
+
+  parts.push(Buffer.from([0x1b, 0x40]));
+  parts.push(Buffer.from([0x1b, 0x61, 0x01]));
+  parts.push(Buffer.from([0x1b, 0x45, 0x01]));
+  parts.push("Centro do Cerebro e Coluna\n");
+  parts.push(Buffer.from([0x1b, 0x45, 0x00]));
+  parts.push("Sistema de Atendimento\n");
+  parts.push(`${sep}\n\n`);
+
+  parts.push(Buffer.from([0x1b, 0x45, 0x01]));
+  parts.push("SENHA\n");
+  parts.push(Buffer.from([0x1d, 0x21, 0x22]));
+  parts.push(`${ticket.number}\n`);
+  parts.push(Buffer.from([0x1d, 0x21, 0x00]));
+  parts.push(Buffer.from([0x1b, 0x45, 0x00]));
+  parts.push("\n");
+
+  parts.push(Buffer.from([0x1b, 0x45, 0x01]));
+  parts.push(`${formatTicketLabel(ticket)}\n`);
+  parts.push(Buffer.from([0x1b, 0x45, 0x00]));
+  parts.push("\n");
+
+  if (ticket.doctor_name) {
+    parts.push(`${ticket.doctor_name}\n`);
+  }
+
+  parts.push(`${sep}\n`);
+  parts.push(`${now}\n\n`);
+  parts.push("Aguarde ser chamado no painel.\n");
+  parts.push("Obrigado pela preferencia.\n\n\n");
+  parts.push(Buffer.from([0x1d, 0x56, 0x41, 0x00]));
+
+  return Buffer.concat(
+    parts.map((p) => (typeof p === "string" ? Buffer.from(p, "utf8") : p)),
+  );
+};
+
+const printTicketToNetwork = async (ticket: any) => {
+  const cfg = getPrinterConfig();
+  if (!cfg) return;
+  if (!shouldPrintTicket(ticket)) {
+    console.warn(
+      `[Printer] Impressão duplicada evitada para ticket ${ticket?.number ?? ""}`,
+    );
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    const payload = buildEscPosPayload(ticket);
+
+    let finished = false;
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      resolve();
+    };
+
+    const socket = net.createConnection({ host: cfg.host, port: cfg.port });
+    socket.setTimeout(5000);
+
+    socket.on("connect", () => {
+      socket.end(payload);
+    });
+
+    socket.on("timeout", () => {
+      console.error(
+        `[Printer] Timeout ao imprimir (${cfg.host}:${cfg.port})`,
+      );
+      socket.destroy();
+      done();
+    });
+
+    socket.on("error", (err) => {
+      console.error(
+        `[Printer] Erro ao imprimir (${cfg.host}:${cfg.port}):`,
+        err.message,
+      );
+      done();
+    });
+
+    socket.on("close", () => {
+      console.log(
+        `[Printer] Ticket ${ticket?.number ?? ""} enviado para ${cfg.host}:${cfg.port}`,
+      );
+      done();
+    });
+  });
+};
+
+const normalizeWorkstationCode = (value: unknown) => {
+  if (typeof value !== "string") return null;
+  const normalized = value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (normalized.length < 2 || normalized.length > 10) return null;
   return normalized;
 };
 
@@ -64,8 +217,21 @@ const startServer = async (listen: boolean = true) => {
   console.log("[Startup] Mantendo estado das senhas para recuperação de queda de energia.");
 
   // Release locked workstations
-  await db.run(`UPDATE workstations SET current_user_id = NULL, is_active = 0`);
+  await db.run(`UPDATE workstations SET current_user_id = NULL`);
   console.log("[Startup] Workstations released.");
+  const printerHost = process.env.PRINTER_HOST;
+  const printerEnabledRaw = String(process.env.PRINTER_ENABLED ?? "true").toLowerCase();
+  const printerEnabled = ["1", "true", "yes", "on"].includes(printerEnabledRaw);
+  const printerPort = Number(process.env.PRINTER_PORT ?? 9100);
+  if (!printerHost) {
+    console.warn("[Startup] Impressora desativada: PRINTER_HOST não configurado.");
+  } else if (!printerEnabled) {
+    console.warn("[Startup] Impressora desativada: PRINTER_ENABLED=false.");
+  } else if (!Number.isFinite(printerPort) || printerPort <= 0) {
+    console.warn("[Startup] Impressora desativada: PRINTER_PORT inválido.");
+  } else {
+    console.log(`[Startup] Impressora configurada: ${printerHost}:${printerPort}`);
+  }
 
   // --- API Routes ---
 
@@ -116,6 +282,13 @@ const startServer = async (listen: boolean = true) => {
         });
       }
 
+      if (!workstation.is_active) {
+        return res.status(400).json({
+          success: false,
+          message: "Este posto de trabalho está desativado.",
+        });
+      }
+
       if (
         workstation.current_user_id &&
         workstation.current_user_id !== user.id
@@ -128,13 +301,12 @@ const startServer = async (listen: boolean = true) => {
 
       // Lock workstation
       await db.run(
-        "UPDATE workstations SET current_user_id = ?, is_active = 1 WHERE id = ?",
+        "UPDATE workstations SET current_user_id = ? WHERE id = ?",
         [user.id, workstation_id],
       );
       broadcast("workstation:updated", {
         id: workstation.id,
         current_user_id: user.id,
-        is_active: 1,
       });
     }
 
@@ -174,6 +346,13 @@ const startServer = async (listen: boolean = true) => {
       });
     }
 
+    if (!workstation.is_active) {
+      return res.status(400).json({
+        success: false,
+        message: "Este posto de trabalho está desativado.",
+      });
+    }
+
     if (
       workstation.current_user_id &&
       workstation.current_user_id !== user.id
@@ -185,13 +364,12 @@ const startServer = async (listen: boolean = true) => {
     }
 
     await db.run(
-      "UPDATE workstations SET current_user_id = ?, is_active = 1 WHERE id = ?",
+      "UPDATE workstations SET current_user_id = ? WHERE id = ?",
       [user.id, workstation_id],
     );
     broadcast("workstation:updated", {
       id: workstation.id,
       current_user_id: user.id,
-      is_active: 1,
     });
 
     const token = generateToken(user);
@@ -209,13 +387,12 @@ const startServer = async (listen: boolean = true) => {
     if (workstation_id) {
       // Release workstation
       await db.run(
-        "UPDATE workstations SET current_user_id = NULL, is_active = 0 WHERE id = ? AND current_user_id = ?",
+        "UPDATE workstations SET current_user_id = NULL WHERE id = ? AND current_user_id = ?",
         [workstation_id, user_id],
       );
       broadcast("workstation:updated", {
         id: workstation_id,
         current_user_id: null,
-        is_active: 0,
       });
 
       // Auto-mark current tickets as 'missed' if in attendance? Or just leave them?
@@ -235,9 +412,103 @@ const startServer = async (listen: boolean = true) => {
 
   // Workstations
   app.get("/api/workstations", async (req, res) => {
+    const workstations = await db.all(
+      "SELECT * FROM workstations WHERE is_active = 1",
+    );
+    res.json(workstations);
+  });
+
+  app.get("/api/admin/workstations", verifyToken, requireAdmin, async (_req, res) => {
     const workstations = await db.all("SELECT * FROM workstations");
     res.json(workstations);
   });
+
+  app.post(
+    "/api/admin/workstations",
+    verifyToken,
+    requireAdmin,
+    async (req, res) => {
+      const { code, name, is_active } = req.body ?? {};
+      const normalizedCode = normalizeWorkstationCode(code);
+      const normalizedName =
+        typeof name === "string" ? name.trim().slice(0, 100) : "";
+
+      if (!normalizedCode) {
+        return res.status(400).json({ error: "Código inválido." });
+      }
+      if (!normalizedName) {
+        return res.status(400).json({ error: "Nome inválido." });
+      }
+
+      const conflict = await db.get(
+        "SELECT id FROM workstations WHERE lower(code) = lower(?) LIMIT 1",
+        [normalizedCode],
+      );
+      if (conflict) {
+        return res.status(409).json({ error: "Código já está em uso." });
+      }
+
+      const activeValue =
+        typeof is_active === "boolean" ? (is_active ? 1 : 0) : 1;
+
+      const result = await db.run(
+        "INSERT INTO workstations (code, name, is_active) VALUES (?, ?, ?)",
+        [normalizedCode, normalizedName, activeValue],
+      );
+      const created = await db.get("SELECT * FROM workstations WHERE id = ?", [
+        result.lastID,
+      ]);
+      res.json(created);
+    },
+  );
+
+  app.put(
+    "/api/admin/workstations/:id",
+    verifyToken,
+    requireAdmin,
+    async (req, res) => {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) {
+        return res.status(400).json({ error: "ID inválido." });
+      }
+
+      const existing = await db.get("SELECT * FROM workstations WHERE id = ?", [
+        id,
+      ]);
+      if (!existing) {
+        return res.status(404).json({ error: "Guichê não encontrado." });
+      }
+
+      const { name, is_active } = req.body ?? {};
+      const nextName =
+        typeof name === "string" ? name.trim().slice(0, 100) : null;
+
+      let nextActive: number | null = null;
+      if (typeof is_active === "boolean") {
+        nextActive = is_active ? 1 : 0;
+      }
+
+      if (nextActive === 0 && existing.current_user_id) {
+        return res
+          .status(409)
+          .json({ error: "Não é possível desativar um guichê ocupado." });
+      }
+
+      const newName = nextName ?? existing.name;
+      const newActive = nextActive ?? existing.is_active ?? 1;
+
+      await db.run("UPDATE workstations SET name = ?, is_active = ? WHERE id = ?", [
+        newName,
+        newActive,
+        id,
+      ]);
+
+      const updated = await db.get("SELECT * FROM workstations WHERE id = ?", [
+        id,
+      ]);
+      res.json(updated);
+    },
+  );
 
   // Doctors
   app.get("/api/doctors", async (req, res) => {
@@ -428,7 +699,7 @@ const startServer = async (listen: boolean = true) => {
     let prefix = type === "outros" ? "O" : "C";
 
     if (subtype === "apoio") {
-      prefix = "AP";
+      prefix = "APO";
     }
 
     if (subtype === "agendamento_cirurgico") {
@@ -491,6 +762,7 @@ const startServer = async (listen: boolean = true) => {
       );
 
       broadcast("ticket:created", newTicket);
+      void printTicketToNetwork(newTicket);
 
       res.json(newTicket);
     } catch (err: any) {
@@ -506,7 +778,7 @@ const startServer = async (listen: boolean = true) => {
   app.get("/api/tickets/history", async (req, res) => {
     const { limit, queue_sector } = req.query;
     let query = `
-        SELECT t.*, d.name as doctor_name, w.code as workstation_code
+        SELECT t.*, d.name as doctor_name, w.name as workstation_name, w.code as workstation_code
         FROM tickets t
         LEFT JOIN doctors d ON t.doctor_id = d.id
         LEFT JOIN workstations w ON t.workstation_id = w.id
@@ -531,7 +803,15 @@ const startServer = async (listen: boolean = true) => {
     }
 
     const history = await db.all(query, params);
-    res.json(history);
+    res.json(
+      history.map((t: any) => ({
+        ...t,
+        created_at: toIsoUtc(t.created_at),
+        called_at: toIsoUtc(t.called_at),
+        started_at: toIsoUtc(t.started_at),
+        finished_at: toIsoUtc(t.finished_at),
+      })),
+    );
   });
 
   // Get No-Show Tickets (Missed)
@@ -616,7 +896,16 @@ const startServer = async (listen: boolean = true) => {
   // Recall Ticket
   app.post("/api/tickets/:id/recall", verifyToken, async (req, res) => {
     const { id } = req.params;
-    const ticket = await db.get("SELECT * FROM tickets WHERE id = ?", [id]);
+    const ticket = await db.get(
+      `
+        SELECT t.*, d.name as doctor_name, w.name as workstation_name, w.code as workstation_code
+        FROM tickets t
+        LEFT JOIN doctors d ON t.doctor_id = d.id
+        LEFT JOIN workstations w ON t.workstation_id = w.id
+        WHERE t.id = ?
+      `,
+      [id],
+    );
 
     if (!ticket) {
       return res.status(404).json({ error: "Ticket not found" });
@@ -1110,10 +1399,10 @@ const startServer = async (listen: boolean = true) => {
           }
           wsSessions.set(wsWorkstation, { userId: wsUser, timer: null });
           await db.run(
-            "UPDATE workstations SET current_user_id = ?, is_active = 1 WHERE id = ?",
+            "UPDATE workstations SET current_user_id = ? WHERE id = ?",
             [wsUser, wsWorkstation]
           );
-          broadcast("workstation:updated", { id: wsWorkstation, current_user_id: wsUser, is_active: 1 });
+          broadcast("workstation:updated", { id: wsWorkstation, current_user_id: wsUser });
         }
       } catch {
       }
@@ -1128,10 +1417,10 @@ const startServer = async (listen: boolean = true) => {
             const wsRow = await db.get("SELECT current_user_id FROM workstations WHERE id = ?", [key]);
             if (wsRow && wsRow.current_user_id === wsUser) {
               await db.run(
-                "UPDATE workstations SET current_user_id = NULL, is_active = 0 WHERE id = ? AND current_user_id = ?",
+                "UPDATE workstations SET current_user_id = NULL WHERE id = ? AND current_user_id = ?",
                 [key, wsUser]
               );
-              broadcast("workstation:updated", { id: key, current_user_id: null, is_active: 0 });
+              broadcast("workstation:updated", { id: key, current_user_id: null });
             }
           }, 120000);
           wsSessions.set(key, current);

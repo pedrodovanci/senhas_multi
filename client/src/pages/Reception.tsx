@@ -17,22 +17,17 @@ const Reception: React.FC = () => {
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [lastTicket, setLastTicket] = useState<Ticket | null>(null);
   const [loading, setLoading] = useState(false);
+  const submittingRef = useRef(false);
   const [ticketType, setTicketType] = useState<"consulta" | "outros">(
     "consulta",
   );
-  const printTriggered = useRef(false);
 
   useEffect(() => {
-    if (lastTicket && !printTriggered.current) {
-      printTriggered.current = true;
-      // Delay de 300ms para garantir que o layout de impressão
-      // já foi renderizado no DOM antes de chamar window.print()
-      setTimeout(() => {
-        window.print();
-      }, 300);
-    }
-    if (!lastTicket) {
-      printTriggered.current = false;
+    if (lastTicket) {
+      const timer = setTimeout(() => {
+        setLastTicket(null);
+      }, 3000);
+      return () => clearTimeout(timer);
     }
   }, [lastTicket]);
 
@@ -55,6 +50,8 @@ const Reception: React.FC = () => {
   }, [token, navigate, logout]);
 
   const generateTicket = async (doctorId: number | null, subtype?: string) => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setLoading(true);
     try {
       const res = await apiFetch(`/api/tickets`, {
@@ -82,56 +79,41 @@ const Reception: React.FC = () => {
       alert("Erro ao gerar senha");
     } finally {
       setLoading(false);
+      submittingRef.current = false;
     }
   };
 
   return (
     <>
-      <style>{`
-        @media print {
-          @page {
-            width: 58mm;
-            margin: 2mm 2mm 8mm 2mm;
-          }
-          body * { visibility: hidden; }
-          #ticket-print, #ticket-print * { visibility: visible; }
-          #ticket-print {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 54mm;
-          }
-        }
-      `}</style>
-      <div className="min-h-screen bg-gray-200 p-8 relative print:hidden">
+      <div className="min-h-screen bg-gray-200 p-8 relative">
         <div className="max-w-6xl mx-auto">
           <h1 className="text-3xl font-bold text-gray-800 mb-8 text-center">
             Recepção - Gerar Senha
           </h1>
 
           {/* Ticket Type Selection */}
-          <div className="flex justify-center mb-12 space-x-6">
+          <div className="flex justify-center mb-12 gap-6 flex-wrap">
             <button
               onClick={() => setTicketType("consulta")}
-              className={`flex items-center px-8 py-4 rounded-xl text-xl font-bold transition-all shadow-md ${
+              className={`flex items-center px-10 py-6 rounded-2xl text-2xl font-black transition-all shadow-md active:scale-[0.98] ${
                 ticketType === "consulta"
                   ? "bg-primary text-white scale-105 ring-4 ring-primary/20"
-                  : "bg-white text-gray-600 hover:bg-gray-100"
+                  : "bg-white text-gray-700 hover:bg-gray-100"
               }`}
             >
-              <Stethoscope className="mr-3 w-6 h-6" />
+              <Stethoscope className="mr-4 w-8 h-8" />
               CONSULTAS
             </button>
 
             <button
               onClick={() => setTicketType("outros")}
-              className={`flex items-center px-8 py-4 rounded-xl text-xl font-bold transition-all shadow-md ${
+              className={`flex items-center px-10 py-6 rounded-2xl text-2xl font-black transition-all shadow-md active:scale-[0.98] ${
                 ticketType === "outros"
                   ? "bg-secondary text-white scale-105 ring-4 ring-secondary/20"
-                  : "bg-white text-gray-600 hover:bg-gray-100"
+                  : "bg-white text-gray-700 hover:bg-gray-100"
               }`}
             >
-              <LayoutGrid className="mr-3 w-6 h-6" />
+              <LayoutGrid className="mr-4 w-8 h-8" />
               OUTROS
             </button>
           </div>
@@ -159,39 +141,44 @@ const Reception: React.FC = () => {
                   Aguarde ser chamado no painel.
                 </p>
 
-                <div className="mb-6 text-green-600 font-medium text-sm flex items-center justify-center gap-2">
+                <div className="mb-2 text-green-600 font-medium text-sm flex items-center justify-center gap-2">
                   <CheckCircle className="w-4 h-4" /> Senha enviada para
                   impressão
                 </div>
-
-                <button
-                  onClick={() => setLastTicket(null)}
-                  className="w-full py-4 bg-gray-800 hover:bg-gray-900 text-white rounded-xl font-bold text-lg transition-colors"
-                >
-                  Fechar
-                </button>
               </div>
             </div>
           )}
 
           {ticketType === "consulta" ? (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+            <div
+              className="grid gap-6"
+              style={{
+                gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
+              }}
+            >
               {doctors.map((doctor) => (
                 <button
                   key={doctor.id}
                   onClick={() => generateTicket(doctor.id)}
                   disabled={loading}
-                  className="bg-white py-4 px-5 rounded-xl shadow-sm hover:shadow-md transition-all transform hover:-translate-y-0.5 border border-gray-100 flex flex-col justify-center group relative overflow-hidden min-h-[80px]"
+                  className="bg-white py-6 px-6 rounded-2xl shadow-sm hover:shadow-md active:scale-[0.98] transition-all border border-gray-100 flex items-center group relative overflow-hidden min-h-[130px]"
                 >
                   <div
-                    className={`absolute top-0 left-0 w-1.5 h-full ${ticketType === "consulta" ? "bg-primary" : "bg-secondary"} transition-colors duration-300`}
+                    className={`absolute top-0 left-0 w-2.5 h-full ${ticketType === "consulta" ? "bg-primary" : "bg-secondary"} transition-colors duration-300`}
                   />
-                  <h3 className="text-base font-bold text-gray-800 leading-tight pl-1">
-                    {doctor.name}
-                  </h3>
-                  <p className="text-gray-400 text-xs mt-0.5 pl-1">
-                    {doctor.specialization}
-                  </p>
+                  <div className="pl-5 flex flex-col justify-center text-left w-full">
+                    <h3 className="text-2xl font-black text-gray-900 leading-snug">
+                      {doctor.name}
+                    </h3>
+                    <div className="flex items-center gap-2 mt-3">
+                      <span
+                        className={`w-3 h-3 rounded-full flex-shrink-0 ${ticketType === "consulta" ? "bg-primary" : "bg-secondary"}`}
+                      />
+                      <p className="text-gray-700 text-lg font-bold">
+                        {doctor.specialization}
+                      </p>
+                    </div>
+                  </div>
                 </button>
               ))}
             </div>
@@ -200,11 +187,11 @@ const Reception: React.FC = () => {
               <button
                 onClick={() => generateTicket(null, "agendamento_cirurgico")}
                 disabled={loading}
-                className="bg-white py-10 px-6 rounded-xl shadow-sm hover:shadow-md transition-all border border-gray-100 flex flex-col items-center justify-center gap-3 group relative overflow-hidden"
+                className="bg-white py-12 px-8 rounded-2xl shadow-sm hover:shadow-md active:scale-[0.98] transition-all border border-gray-100 flex flex-col items-center justify-center gap-4 group relative overflow-hidden min-h-[180px]"
               >
-                <div className="absolute top-0 left-0 w-1.5 h-full bg-secondary" />
-                <Scissors className="w-10 h-10 text-secondary" />
-                <span className="text-lg font-bold text-gray-800">
+                <div className="absolute top-0 left-0 w-2.5 h-full bg-secondary" />
+                <Scissors className="w-12 h-12 text-secondary" />
+                <span className="text-2xl font-black text-gray-900 text-center">
                   Agendamento Cirúrgico
                 </span>
               </button>
@@ -212,135 +199,17 @@ const Reception: React.FC = () => {
               <button
                 onClick={() => generateTicket(null, "apoio")}
                 disabled={loading}
-                className="bg-white py-10 px-6 rounded-xl shadow-sm hover:shadow-md transition-all border border-gray-100 flex flex-col items-center justify-center gap-3 group relative overflow-hidden"
+                className="bg-white py-12 px-8 rounded-2xl shadow-sm hover:shadow-md active:scale-[0.98] transition-all border border-gray-100 flex flex-col items-center justify-center gap-4 group relative overflow-hidden min-h-[180px]"
               >
-                <div className="absolute top-0 left-0 w-1.5 h-full bg-gray-400" />
-                <Headphones className="w-10 h-10 text-gray-500" />
-                <span className="text-lg font-bold text-gray-800">Apoio</span>
+                <div className="absolute top-0 left-0 w-2.5 h-full bg-gray-400" />
+                <Headphones className="w-12 h-12 text-gray-600" />
+                <span className="text-2xl font-black text-gray-900">Apoio</span>
               </button>
             </div>
           )}
         </div>
       </div>
 
-      {/* Print Layout */}
-      {lastTicket && (
-        <div
-          id="ticket-print"
-          style={{
-            fontFamily: "monospace",
-            fontSize: "12px",
-            width: "54mm",
-            padding: "0",
-            textAlign: "center",
-            color: "#000",
-            background: "#fff",
-          }}
-          className="hidden print:block"
-        >
-          <img
-            src="/logo-ccc.png"
-            
-            style={{
-              maxWidth: "40mm",
-              height: "auto",
-              margin: "0 auto 4px auto",
-              display: "block",
-            }}
-          />
-          <div
-            style={{
-              fontWeight: "bold",
-              fontSize: "13px",
-              marginBottom: "2px",
-            }}
-          >
-            
-          </div>
-          <div
-            style={{
-              fontWeight: "bold",
-              fontSize: "13px",
-              marginBottom: "6px",
-            }}
-          >
-            
-          </div>
-
-          <div style={{ borderTop: "1px dashed #000", marginBottom: "8px" }} />
-
-          <div
-            style={{
-              fontSize: "10px",
-              fontWeight: "bold",
-              letterSpacing: "2px",
-              marginBottom: "2px",
-            }}
-          >
-            SENHA
-          </div>
-          <div
-            style={{
-              fontSize: "40px",
-              fontWeight: "900",
-              lineHeight: "1",
-              marginBottom: "6px",
-              letterSpacing: "-1px",
-            }}
-          >
-            {lastTicket.number}
-          </div>
-
-          <div
-            style={{
-              display: "inline-block",
-              border: "1px solid #000",
-              padding: "1px 6px",
-              fontSize: "11px",
-              fontWeight: "bold",
-              textTransform: "uppercase",
-              marginBottom: "8px",
-            }}
-          >
-            {lastTicket.subtype
-              ? lastTicket.subtype.replace("_", " ").toUpperCase()
-              : lastTicket.type.toUpperCase()}
-          </div>
-
-          {lastTicket.doctor_name && (
-            <div
-              style={{
-                fontSize: "11px",
-                marginBottom: "6px",
-                fontWeight: "bold",
-              }}
-            >
-              {lastTicket.doctor_name}
-            </div>
-          )}
-
-          <div style={{ borderTop: "1px dashed #000", marginBottom: "6px" }} />
-
-          <div style={{ fontSize: "10px", marginBottom: "8px" }}>
-            {new Date().toLocaleString("pt-BR")}
-          </div>
-
-          <div
-            style={{
-              fontSize: "11px",
-              fontWeight: "bold",
-              marginBottom: "2px",
-            }}
-          >
-            Aguarde ser chamado
-          </div>
-          <div style={{ fontSize: "11px", marginBottom: "2px" }}>
-            no painel.
-          </div>
-
-          <div style={{ borderTop: "1px dashed #000", marginTop: "8px" }} />
-        </div>
-      )}
     </>
   );
 };

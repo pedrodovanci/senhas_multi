@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState } from 'react';
 import type { User, Workstation } from '../types';
+import { apiFetch } from '../utils/api';
 
 interface AuthContextType {
   user: User | null;
@@ -47,6 +48,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = () => {
+    const userId = user?.id;
+    const workstationId = workstation?.id;
+    if (userId && workstationId) {
+      void apiFetch('/api/logout', {
+        method: 'POST',
+        body: JSON.stringify({ user_id: userId, workstation_id: workstationId }),
+        token,
+      }).catch(() => {});
+    }
     setUser(null);
     setWorkstation(null);
     setToken(null);

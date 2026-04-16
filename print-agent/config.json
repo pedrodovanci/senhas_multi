@@ -1,8 +1,0 @@
-{
-  "server_url": "ws://192.168.0.130:3000",
-  "workstation_id": 1,
-  "printer_port": "USB001",
-  "printer_vendor_id": "0x04b8",
-  "printer_product_id": "0x0202",
-  "reconnect_interval_ms": 3000
-}

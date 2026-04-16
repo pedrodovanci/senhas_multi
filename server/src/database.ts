@@ -245,7 +245,19 @@ export const initDb = async () => {
     console.log("Migration: Added doctors.prefix");
   }
 
-  const reservedPrefixes = new Set(["AC", "AP", "C", "O"]);
+  const workstationColumns = await db.all(
+    "PRAGMA table_info(workstations)",
+  );
+  const workstationColumnNames = workstationColumns.map((c: any) => c.name);
+
+  if (!workstationColumnNames.includes("is_active")) {
+    await db.run(
+      "ALTER TABLE workstations ADD COLUMN is_active BOOLEAN DEFAULT 1",
+    );
+    console.log("Migration: Added workstations.is_active");
+  }
+
+  const reservedPrefixes = new Set(["AC", "APO", "C", "O"]);
   const normalizePrefix = (value: string) =>
     value
       .toUpperCase()
@@ -335,8 +347,9 @@ export const initDb = async () => {
     // Create G01 to G12
     for (let i = 1; i <= 12; i++) {
       const num = String(i).padStart(2, "0");
+      const activeValue = i <= 4 ? 1 : 0;
       await db.run(
-        `INSERT INTO workstations (code, name) VALUES ('G${num}', 'Guichê ${num}')`,
+        `INSERT INTO workstations (code, name, is_active) VALUES ('G${num}', 'Guichê ${num}', ${activeValue})`,
       );
     }
   }
@@ -406,6 +419,33 @@ export const initDb = async () => {
       INSERT INTO doctors (name, specialization, prefix) VALUES ('Dr. Carlos Rocha', 'Ortopedia', 'CR');
       INSERT INTO doctors (name, specialization, prefix) VALUES ('Dr. Ana Costa', 'Cirurgia Geral', 'AN');
     `);
+  }
+
+  const uvRow: any = await db.get("PRAGMA user_version");
+  const userVersion = Number(uvRow?.user_version || 0);
+  if (userVersion < 1) {
+    await db.run("UPDATE workstations SET is_active = 1");
+
+    for (let i = 5; i <= 12; i++) {
+      const num = String(i).padStart(2, "0");
+      await db.run(
+        "UPDATE workstations SET is_active = 0 WHERE code = ? AND name = ?",
+        [`G${num}`, `Guichê ${num}`],
+      );
+    }
+
+    await db.run("PRAGMA user_version = 1");
+  }
+
+  if (userVersion < 2) {
+    await db.run(`
+      UPDATE tickets
+      SET number = 'APO' || SUBSTR(number, 3)
+      WHERE subtype = 'apoio'
+        AND upper(number) LIKE 'AP%'
+        AND upper(number) NOT LIKE 'APO%'
+    `);
+    await db.run("PRAGMA user_version = 2");
   }
 
   return db;

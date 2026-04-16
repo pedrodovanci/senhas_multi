@@ -7,6 +7,9 @@ export interface Config {
   printer_port: string;
   printer_vendor_id: string;
   printer_product_id: string;
+  printer_host?: string;
+  printer_network_port?: number;
+  printer_mode?: "usb" | "network";
   reconnect_interval_ms: number;
 }
 
@@ -37,6 +40,7 @@ export const loadConfig = (): Config => {
     printer_port: "USB001",
     printer_vendor_id: "0x04b8",
     printer_product_id: "0x0202",
+    printer_mode: "usb",
     reconnect_interval_ms: 3000
   };
 };
