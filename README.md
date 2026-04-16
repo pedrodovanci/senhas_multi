@@ -40,9 +40,10 @@ Após iniciar o frontend, você pode acessar as seguintes rotas no navegador:
 | Módulo | URL (Exemplo) | Descrição |
 |---|---|---|
 | **Login** | `/login` | Tela de autenticação para atendentes e administradores. |
-| **Recepção / Totem** | `/recepcao/consultas` | Interface para o paciente retirar sua senha (Consulta/Cirurgia). |
+| **Recepção / Totem** | `/recepcao/consultas` | Interface para o paciente retirar sua senha (Consultas/Outros). |
 | **Terminal do Atendente** | `/atendente` | Painel para chamar senhas, visualizar fila e histórico. |
-| **Painel de TV** | `/painel` | Exibição pública das senhas chamadas (com voz e alerta sonoro). |
+| **Painel de TV** | `/painel` | Exibição pública das senhas chamadas (com alerta sonoro). |
+| **Display (Layout alternativo)** | `/display` | Exibição pública das senhas chamadas (layout alternativo). |
 | **Administração** | `/admin` | Dashboard para gerenciar usuários, médicos e estatísticas. |
 
 ---
@@ -69,5 +70,5 @@ O banco de dados é inicializado com os seguintes usuários para testes:
 ## 📝 Notas Importantes
 
 - **Banco de Dados:** O sistema utiliza um arquivo local `database.sqlite` dentro da pasta `server`. Se precisar resetar o banco, basta apagar este arquivo e reiniciar o servidor.
-- **Impressão:** O sistema possui integração básica para impressão térmica (configurada no backend), mas funciona perfeitamente sem impressora (apenas gerando a senha na tela).
-- **Áudio:** O Painel de TV utiliza a API de síntese de voz do navegador (`window.speechSynthesis`). Certifique-se de interagir com a página do painel (clique) para habilitar o áudio, caso o navegador bloqueie o autoplay.
+- **Impressão:** O sistema pode imprimir senhas quando configurado (via impressora em rede no backend e/ou via agente opcional `print-agent`). Ele também funciona sem impressora (apenas gerando a senha na tela).
+- **Áudio:** O Painel de TV toca um alerta sonoro ao chamar uma senha. Alguns navegadores bloqueiam autoplay; por isso pode ser necessário clicar no botão “Clique para ativar o som”.
