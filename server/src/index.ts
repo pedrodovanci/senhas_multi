@@ -510,6 +510,36 @@ const startServer = async (listen: boolean = true) => {
     },
   );
 
+  app.post(
+    "/api/admin/workstations/:id/release",
+    verifyToken,
+    requireAdmin,
+    async (req, res) => {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) {
+        return res.status(400).json({ error: "ID inválido." });
+      }
+
+      const existing = await db.get("SELECT * FROM workstations WHERE id = ?", [
+        id,
+      ]);
+      if (!existing) {
+        return res.status(404).json({ error: "Guichê não encontrado." });
+      }
+
+      await db.run("UPDATE workstations SET current_user_id = NULL WHERE id = ?", [
+        id,
+      ]);
+
+      const updated = await db.get("SELECT * FROM workstations WHERE id = ?", [
+        id,
+      ]);
+
+      broadcast("workstation:updated", { id, current_user_id: null });
+      res.json(updated);
+    },
+  );
+
   // Doctors
   app.get("/api/doctors", async (req, res) => {
     const doctors = await db.all("SELECT * FROM doctors");

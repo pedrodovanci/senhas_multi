@@ -75,6 +75,24 @@ export const WorkstationsManager: React.FC = () => {
     }
   };
 
+  const releaseWorkstation = async (ws: Workstation) => {
+    const ok = window.confirm(
+      `Liberar o guichê ${ws.code}? Isso vai desocupar o terminal mesmo que o atendente ainda esteja logado.`,
+    );
+    if (!ok) return;
+
+    try {
+      await apiFetch(`/api/admin/workstations/${ws.id}/release`, {
+        token,
+        method: "POST",
+      });
+      fetchWorkstations();
+    } catch (error) {
+      console.error(error);
+      alert("Erro ao liberar guichê");
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -173,6 +191,15 @@ export const WorkstationsManager: React.FC = () => {
                     >
                       <Edit size={18} />
                     </button>
+                    {occupied && (
+                      <button
+                        onClick={() => releaseWorkstation(ws)}
+                        className="px-3 py-2 rounded-lg text-sm font-medium transition-colors text-yellow-700 hover:bg-yellow-50"
+                        title="Liberar (desocupar) guichê"
+                      >
+                        Liberar
+                      </button>
+                    )}
                     <button
                       onClick={() => toggleActive(ws)}
                       className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${active ? "text-red-600 hover:bg-red-50" : "text-green-600 hover:bg-green-50"}`}
@@ -280,4 +307,3 @@ export const WorkstationsManager: React.FC = () => {
     </div>
   );
 };
-
