@@ -3,10 +3,12 @@ import type { Doctor } from "../types";
 import { BaseModal } from "./BaseModal";
 import { Edit, Trash, Plus } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
+import { useSocket } from "../contexts/SocketContext";
 import { apiFetch } from "../utils/api";
 
 export const DoctorsManager: React.FC = () => {
   const { token, logout } = useAuth();
+  const socketContext = useSocket();
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDoctor, setEditingDoctor] = useState<Doctor | null>(null);
@@ -20,6 +22,36 @@ export const DoctorsManager: React.FC = () => {
   useEffect(() => {
     if (token) fetchDoctors();
   }, [token]);
+
+  useEffect(() => {
+    if (!socketContext || !socketContext.socket) return;
+
+    const handleCreated = (doctor: Doctor) => {
+      setDoctors((prev) =>
+        prev.some((d) => d.id === doctor.id) ? prev : [...prev, doctor],
+      );
+    };
+    const handleUpdated = (doctor: Doctor) => {
+      setDoctors((prev) =>
+        prev.map((d) => (d.id === doctor.id ? doctor : d)),
+      );
+    };
+    const handleDeleted = (payload: { id: number }) => {
+      setDoctors((prev) => prev.filter((d) => d.id !== payload.id));
+    };
+    const handleReconnected = () => fetchDoctors();
+
+    socketContext.on("doctor:created", handleCreated);
+    socketContext.on("doctor:updated", handleUpdated);
+    socketContext.on("doctor:deleted", handleDeleted);
+    socketContext.on("ws:reconnected", handleReconnected);
+    return () => {
+      socketContext.off("doctor:created", handleCreated);
+      socketContext.off("doctor:updated", handleUpdated);
+      socketContext.off("doctor:deleted", handleDeleted);
+      socketContext.off("ws:reconnected", handleReconnected);
+    };
+  }, [socketContext]);
 
   const fetchDoctors = async () => {
     try {

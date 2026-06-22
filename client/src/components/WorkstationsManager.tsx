@@ -3,10 +3,12 @@ import type { Workstation } from "../types";
 import { BaseModal } from "./BaseModal";
 import { Check, Edit, Plus, X as XIcon } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
+import { useSocket } from "../contexts/SocketContext";
 import { apiFetch } from "../utils/api";
 
 export const WorkstationsManager: React.FC = () => {
   const { token } = useAuth();
+  const socketContext = useSocket();
   const [workstations, setWorkstations] = useState<Workstation[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editing, setEditing] = useState<Workstation | null>(null);
@@ -29,6 +31,24 @@ export const WorkstationsManager: React.FC = () => {
   useEffect(() => {
     if (token) fetchWorkstations();
   }, [token]);
+
+  useEffect(() => {
+    if (!socketContext || !socketContext.socket) return;
+
+    const handleWorkstationUpdated = (payload: { id: number; current_user_id: number | null }) => {
+      setWorkstations(prev =>
+        prev.map(ws => ws.id === payload.id ? { ...ws, current_user_id: payload.current_user_id } : ws)
+      );
+    };
+    const handleReconnected = () => fetchWorkstations();
+
+    socketContext.on("workstation:updated", handleWorkstationUpdated);
+    socketContext.on("ws:reconnected", handleReconnected);
+    return () => {
+      socketContext.off("workstation:updated", handleWorkstationUpdated);
+      socketContext.off("ws:reconnected", handleReconnected);
+    };
+  }, [socketContext]);
 
   const fetchWorkstations = async () => {
     try {

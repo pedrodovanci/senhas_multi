@@ -8,12 +8,14 @@ import {
   Scissors,
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
+import { useSocket } from "../contexts/SocketContext";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "../utils/api";
 
 const Reception: React.FC = () => {
   const { token, logout } = useAuth();
   const navigate = useNavigate();
+  const socketContext = useSocket();
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [lastTicket, setLastTicket] = useState<Ticket | null>(null);
   const [loading, setLoading] = useState(false);
@@ -31,12 +33,7 @@ const Reception: React.FC = () => {
     }
   }, [lastTicket]);
 
-  useEffect(() => {
-    if (!token) {
-      navigate("/login");
-      return;
-    }
-
+  const fetchDoctors = () => {
     apiFetch(`/api/doctors`, {
       token,
       onUnauthorized: logout,
@@ -47,13 +44,53 @@ const Reception: React.FC = () => {
       .then((data) => {
         if (data) setDoctors(data);
       });
+  };
+
+  useEffect(() => {
+    if (!token) {
+      navigate("/login");
+      return;
+    }
+
+    fetchDoctors();
   }, [token, navigate, logout]);
+
+  useEffect(() => {
+    if (!socketContext || !socketContext.socket) return;
+
+    const handleCreated = (doctor: Doctor) => {
+      setDoctors((prev) =>
+        prev.some((d) => d.id === doctor.id) ? prev : [...prev, doctor],
+      );
+    };
+    const handleUpdated = (doctor: Doctor) => {
+      setDoctors((prev) =>
+        prev.map((d) => (d.id === doctor.id ? doctor : d)),
+      );
+    };
+    const handleDeleted = (payload: { id: number }) => {
+      setDoctors((prev) => prev.filter((d) => d.id !== payload.id));
+    };
+    const handleReconnected = () => fetchDoctors();
+
+    socketContext.on("doctor:created", handleCreated);
+    socketContext.on("doctor:updated", handleUpdated);
+    socketContext.on("doctor:deleted", handleDeleted);
+    socketContext.on("ws:reconnected", handleReconnected);
+    return () => {
+      socketContext.off("doctor:created", handleCreated);
+      socketContext.off("doctor:updated", handleUpdated);
+      socketContext.off("doctor:deleted", handleDeleted);
+      socketContext.off("ws:reconnected", handleReconnected);
+    };
+  }, [socketContext]);
 
   const generateTicket = async (doctorId: number | null, subtype?: string) => {
     if (submittingRef.current) return;
     submittingRef.current = true;
     setLoading(true);
     try {
+      const typeToSend = subtype ? "outros" : ticketType;
       const res = await apiFetch(`/api/tickets`, {
         method: "POST",
         token,
@@ -63,7 +100,7 @@ const Reception: React.FC = () => {
         },
         body: JSON.stringify({
           doctor_id: doctorId,
-          type: ticketType,
+          type: typeToSend,
           ...(subtype && { subtype }),
         }),
       });
@@ -85,17 +122,17 @@ const Reception: React.FC = () => {
 
   return (
     <>
-      <div className="min-h-screen bg-gray-200 p-8 relative">
+      <div className="min-h-screen bg-gray-200 p-10 pt-14 relative">
         <div className="max-w-6xl mx-auto">
           <h1 className="text-3xl font-bold text-gray-800 mb-8 text-center">
-            Recepção - Gerar Senha
+            
           </h1>
 
           {/* Ticket Type Selection */}
-          <div className="flex justify-center mb-12 gap-6 flex-wrap">
+          <div className="flex justify-center mb-12 gap-6 flex-wrap mt-6">
             <button
               onClick={() => setTicketType("consulta")}
-              className={`flex items-center px-10 py-6 rounded-2xl text-2xl font-black transition-all shadow-md active:scale-[0.98] ${
+              className={`flex items-center px-10 py-6 rounded-2xl text-3xl font-black transition-all shadow-md active:scale-[0.98] ${
                 ticketType === "consulta"
                   ? "bg-primary text-white scale-105 ring-4 ring-primary/20"
                   : "bg-white text-gray-700 hover:bg-gray-100"
@@ -107,7 +144,7 @@ const Reception: React.FC = () => {
 
             <button
               onClick={() => setTicketType("outros")}
-              className={`flex items-center px-10 py-6 rounded-2xl text-2xl font-black transition-all shadow-md active:scale-[0.98] ${
+              className={`hidden flex items-center px-10 py-6 rounded-2xl text-3xl font-black transition-all shadow-md active:scale-[0.98] ${
                 ticketType === "outros"
                   ? "bg-secondary text-white scale-105 ring-4 ring-secondary/20"
                   : "bg-white text-gray-700 hover:bg-gray-100"
@@ -156,6 +193,40 @@ const Reception: React.FC = () => {
                 gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
               }}
             >
+              <button
+                onClick={() => generateTicket(null, "apoio")}
+                disabled={loading}
+                className="bg-white py-6 px-6 rounded-2xl shadow-sm hover:shadow-md active:scale-[0.98] transition-all border border-gray-100 flex items-center group relative overflow-hidden min-h-[130px]"
+              >
+                <div className="absolute top-0 left-0 w-2.5 h-full bg-gray-400 transition-colors duration-300" />
+                <div className="pl-5 flex flex-col justify-center text-left w-full">
+                  <h3 className="text-2xl font-black text-gray-900 leading-snug">
+                    Apoio
+                  </h3>
+                  <div className="flex items-center gap-2 mt-3">
+                    <span className="w-3 h-3 rounded-full flex-shrink-0 bg-gray-400" />
+                    <p className="text-gray-700 text-lg font-bold">Recepção</p>
+                  </div>
+                </div>
+              </button>
+
+              <button
+                onClick={() => generateTicket(null, "agendamento_cirurgico")}
+                disabled={loading}
+                className="hidden bg-white py-6 px-6 rounded-2xl shadow-sm hover:shadow-md active:scale-[0.98] transition-all border border-gray-100 flex items-center group relative overflow-hidden min-h-[130px]"
+              >
+                <div className="absolute top-0 left-0 w-2.5 h-full bg-secondary transition-colors duration-300" />
+                <div className="pl-5 flex flex-col justify-center text-left w-full">
+                  <h3 className="text-2xl font-black text-gray-900 leading-snug">
+                    Agendamento Cirúrgico
+                  </h3>
+                  <div className="flex items-center gap-2 mt-3">
+                    <span className="w-3 h-3 rounded-full flex-shrink-0 bg-secondary" />
+                    <p className="text-gray-700 text-lg font-bold">Cirurgia</p>
+                  </div>
+                </div>
+              </button>
+
               {doctors.map((doctor) => (
                 <button
                   key={doctor.id}

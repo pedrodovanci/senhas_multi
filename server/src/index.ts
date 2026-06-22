@@ -573,6 +573,7 @@ const startServer = async (listen: boolean = true) => {
       const newDoctor = await db.get("SELECT * FROM doctors WHERE id = ?", [
         result.lastID,
       ]);
+      broadcast("doctor:created", newDoctor);
       res.json(newDoctor);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -605,6 +606,7 @@ const startServer = async (listen: boolean = true) => {
         [name, specialization, normalizedPrefix, id],
       );
       const updated = await db.get("SELECT * FROM doctors WHERE id = ?", [id]);
+      broadcast("doctor:updated", updated);
       res.json(updated);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -620,6 +622,7 @@ const startServer = async (listen: boolean = true) => {
       const { id } = req.params;
       try {
         await db.run("DELETE FROM doctors WHERE id = ?", [id]);
+        broadcast("doctor:deleted", { id: Number(id) });
         res.json({ message: "Deleted" });
       } catch (err: any) {
         res.status(500).json({ error: err.message });

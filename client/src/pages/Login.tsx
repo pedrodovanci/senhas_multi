@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useSocket } from '../contexts/SocketContext';
 import type { Workstation } from '../types';
 import { User as UserIcon, Lock, Monitor, ArrowRight } from 'lucide-react';
 import { apiFetch } from '../utils/api';
@@ -12,15 +13,38 @@ const Login: React.FC = () => {
   const [workstations, setWorkstations] = useState<Workstation[]>([]);
   const { login } = useAuth();
   const navigate = useNavigate();
+  const socketContext = useSocket();
 
   const selectedWs = workstations.find(ws => ws.id === Number(workstationId));
   const isRetirada = !!selectedWs && (selectedWs.code === 'RET01' || selectedWs.name.toLowerCase().includes('retirada'));
 
-  useEffect(() => {
+  const fetchWorkstations = () => {
     apiFetch(`/api/workstations`)
       .then(res => res.json())
       .then(data => setWorkstations(data));
+  };
+
+  useEffect(() => {
+    fetchWorkstations();
   }, []);
+
+  useEffect(() => {
+    if (!socketContext || !socketContext.socket) return;
+
+    const handleWorkstationUpdated = (payload: { id: number; current_user_id: number | null }) => {
+      setWorkstations(prev =>
+        prev.map(ws => ws.id === payload.id ? { ...ws, current_user_id: payload.current_user_id } : ws)
+      );
+    };
+    const handleReconnected = () => fetchWorkstations();
+
+    socketContext.on('workstation:updated', handleWorkstationUpdated);
+    socketContext.on('ws:reconnected', handleReconnected);
+    return () => {
+      socketContext.off('workstation:updated', handleWorkstationUpdated);
+      socketContext.off('ws:reconnected', handleReconnected);
+    };
+  }, [socketContext]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

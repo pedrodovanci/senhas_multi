@@ -54,7 +54,7 @@ const Admin: React.FC = () => {
     }
 
     const fetchStats = () => {
-      apiFetch(`/api/stats`)
+      apiFetch(`/api/stats`, { token, onUnauthorized: logout })
         .then((res) => {
           if (!res.ok) throw new Error("Failed to fetch stats");
           return res.json();
