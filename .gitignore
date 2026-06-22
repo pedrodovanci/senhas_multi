@@ -10,3 +10,4 @@ dist
 .env.*
 print-agent/config.json
 .vscode
+release_senhas/node.exe
