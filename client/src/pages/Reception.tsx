@@ -8,12 +8,14 @@ import {
   Scissors,
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
+import { useSocket } from "../contexts/SocketContext";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "../utils/api";
 
 const Reception: React.FC = () => {
   const { token, logout } = useAuth();
   const navigate = useNavigate();
+  const socketContext = useSocket();
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [lastTicket, setLastTicket] = useState<Ticket | null>(null);
   const [loading, setLoading] = useState(false);
@@ -31,12 +33,7 @@ const Reception: React.FC = () => {
     }
   }, [lastTicket]);
 
-  useEffect(() => {
-    if (!token) {
-      navigate("/login");
-      return;
-    }
-
+  const fetchDoctors = () => {
     apiFetch(`/api/doctors`, {
       token,
       onUnauthorized: logout,
@@ -47,7 +44,46 @@ const Reception: React.FC = () => {
       .then((data) => {
         if (data) setDoctors(data);
       });
+  };
+
+  useEffect(() => {
+    if (!token) {
+      navigate("/login");
+      return;
+    }
+
+    fetchDoctors();
   }, [token, navigate, logout]);
+
+  useEffect(() => {
+    if (!socketContext || !socketContext.socket) return;
+
+    const handleCreated = (doctor: Doctor) => {
+      setDoctors((prev) =>
+        prev.some((d) => d.id === doctor.id) ? prev : [...prev, doctor],
+      );
+    };
+    const handleUpdated = (doctor: Doctor) => {
+      setDoctors((prev) =>
+        prev.map((d) => (d.id === doctor.id ? doctor : d)),
+      );
+    };
+    const handleDeleted = (payload: { id: number }) => {
+      setDoctors((prev) => prev.filter((d) => d.id !== payload.id));
+    };
+    const handleReconnected = () => fetchDoctors();
+
+    socketContext.on("doctor:created", handleCreated);
+    socketContext.on("doctor:updated", handleUpdated);
+    socketContext.on("doctor:deleted", handleDeleted);
+    socketContext.on("ws:reconnected", handleReconnected);
+    return () => {
+      socketContext.off("doctor:created", handleCreated);
+      socketContext.off("doctor:updated", handleUpdated);
+      socketContext.off("doctor:deleted", handleDeleted);
+      socketContext.off("ws:reconnected", handleReconnected);
+    };
+  }, [socketContext]);
 
   const generateTicket = async (doctorId: number | null, subtype?: string) => {
     if (submittingRef.current) return;

@@ -111,6 +111,7 @@ const TVPanel: React.FC = () => {
           audioRef.current.currentTime = 0;
           audioRef.current
             .play()
+            .then(() => setAudioUnlocked(true))
             .catch((e) =>
               console.log("Audio play failed (user interaction needed?):", e),
             );
