@@ -53,6 +53,7 @@ export interface AuthRequest extends Request {
     id: number;
     username: string;
     role: string;
+    doctor_id?: number;
   };
 }
 
@@ -60,12 +61,17 @@ export const generateToken = (user: {
   id: number;
   username: string;
   role: string;
+  doctor_id?: number | null;
 }) => {
-  return jwt.sign(
-    { id: user.id, username: user.username, role: user.role },
-    SECRET_KEY,
-    { expiresIn: "12h" },
-  );
+  const payload: Record<string, unknown> = {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+  };
+  if (user.doctor_id != null) {
+    payload.doctor_id = user.doctor_id;
+  }
+  return jwt.sign(payload, SECRET_KEY, { expiresIn: "12h" });
 };
 
 export const verifyToken = (
@@ -99,6 +105,19 @@ export const requireAdmin = (
     return res
       .status(403)
       .json({ message: "Acesso restrito a administradores." });
+  }
+  next();
+};
+
+export const requireMedico = (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) => {
+  if (!req.user || req.user.role !== "medico" || !req.user.doctor_id) {
+    return res
+      .status(403)
+      .json({ message: "Acesso restrito a médicos com fila habilitada." });
   }
   next();
 };
