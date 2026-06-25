@@ -209,8 +209,11 @@ const broadcast = (type: string, data: any) => {
   });
 };
 
-const startServer = async (listen: boolean = true) => {
-  const db = await initDb();
+const startServer = async (
+  listen: boolean = true,
+  dbPath: string = "./database.sqlite",
+) => {
+  const db = await initDb(dbPath);
 
   // Removemos a lógica de marcar tickets como "missed" na inicialização 
   // para garantir que o sistema não volte zerado após queda de energia.
@@ -1510,9 +1513,9 @@ const startServer = async (listen: boolean = true) => {
         }
       }
     };
-    setInterval(run, 60000);
+    return setInterval(run, 60000);
   };
-  scheduleTicketRecovery();
+  const recoveryInterval = scheduleTicketRecovery();
 
   if (listen) {
     const PORT = process.env.PORT || 3000;
@@ -1533,7 +1536,7 @@ const startServer = async (listen: boolean = true) => {
     process.on("SIGINT", shutdown);
   }
 
-  return { app, httpServer, wss, db };
+  return { app, httpServer, wss, db, recoveryInterval };
 };
 
 if (require.main === module) {

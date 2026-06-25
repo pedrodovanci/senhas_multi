@@ -8,7 +8,9 @@
     "dev": "nodemon src/index.ts",
     "build": "tsc",
     "start:prod": "node dist/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest",
+    "seed:dashboard": "ts-node src/scripts/seedDashboardTest.ts",
+    "seed:dashboard:clean": "ts-node src/scripts/seedDashboardTest.ts --clean"
   },
   "keywords": [],
   "author": "",

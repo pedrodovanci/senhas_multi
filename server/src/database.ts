@@ -2,10 +2,10 @@ import sqlite3 from "sqlite3";
 import { open } from "sqlite";
 import bcrypt from "bcryptjs";
 
-export const initDb = async () => {
+export const initDb = async (dbPath: string = "./database.sqlite") => {
   console.log("Initializing database...");
   const db = await open({
-    filename: "./database.sqlite",
+    filename: dbPath,
     driver: sqlite3.Database,
   });
 
