@@ -86,6 +86,8 @@ const Login: React.FC = () => {
             navigate('/recepcao/consultas');
         } else if (data.user.role === 'admin') {
             navigate('/admin');
+        } else if (data.user.role === 'medico') {
+            navigate('/medico');
         } else {
             navigate('/atendente');
         }
