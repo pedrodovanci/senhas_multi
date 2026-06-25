@@ -65,6 +65,32 @@ export const initDb = async (dbPath: string = "./database.sqlite") => {
     console.log("Users table migrated.");
   }
 
+  // Check if users table needs migration for 'medico' role + doctor_id
+  const usersTableForMedico = await db.get(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'",
+  );
+  if (usersTableForMedico && !usersTableForMedico.sql.includes("'medico'")) {
+    console.log("Migrating users table to support 'medico' role...");
+    await db.run("PRAGMA foreign_keys=OFF");
+    await db.run("ALTER TABLE users RENAME TO users_old");
+    await db.run(`
+      CREATE TABLE users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE,
+        password TEXT,
+        role TEXT CHECK(role IN ('admin', 'attendant', 'cirurgia', 'medico')),
+        active BOOLEAN DEFAULT 1,
+        doctor_id INTEGER UNIQUE REFERENCES doctors(id)
+      )
+    `);
+    await db.run(
+      "INSERT INTO users (id, username, password, role, active) SELECT id, username, password, role, active FROM users_old",
+    );
+    await db.run("DROP TABLE users_old");
+    await db.run("PRAGMA foreign_keys=ON");
+    console.log("Users table migrated for 'medico' role.");
+  }
+
   // Check if tickets table needs migration for 'outros' type
   const ticketsTable = await db.get(
     "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'",
@@ -156,8 +182,9 @@ export const initDb = async (dbPath: string = "./database.sqlite") => {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE,
       password TEXT,
-      role TEXT CHECK(role IN ('admin', 'attendant', 'cirurgia')),
-      active BOOLEAN DEFAULT 1
+      role TEXT CHECK(role IN ('admin', 'attendant', 'cirurgia', 'medico')),
+      active BOOLEAN DEFAULT 1,
+      doctor_id INTEGER UNIQUE REFERENCES doctors(id)
     );
 
     -- WORKSTATIONS (Guichês)
