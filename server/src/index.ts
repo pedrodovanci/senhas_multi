@@ -721,13 +721,20 @@ const startServer = async (
 
   // Users
   app.get("/api/users", verifyToken, requireAdmin, async (req, res) => {
-    const users = await db.all("SELECT id, username, role, active FROM users");
+    const users = await db.all(
+      "SELECT id, username, role, active FROM users WHERE role != 'medico'",
+    );
     res.json(users);
   });
 
   // Create User
   app.post("/api/users", verifyToken, requireAdmin, async (req, res) => {
     const { username, password, role } = req.body;
+    if (role === "medico") {
+      return res
+        .status(400)
+        .json({ error: "Contas de médico são criadas na tela de Médicos." });
+    }
     try {
       const hashedPassword = await bcrypt.hash(password, 10);
       const result = await db.run(
@@ -748,6 +755,11 @@ const startServer = async (
   app.put("/api/users/:id", verifyToken, requireAdmin, async (req, res) => {
     const { id } = req.params;
     const { username, password, role, active } = req.body;
+    if (role === "medico") {
+      return res
+        .status(400)
+        .json({ error: "Contas de médico são editadas na tela de Médicos." });
+    }
     try {
       if (password && password.trim() !== "") {
         const hashedPassword = await bcrypt.hash(password, 10);
