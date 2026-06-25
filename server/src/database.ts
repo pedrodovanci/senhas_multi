@@ -175,7 +175,8 @@ export const initDb = async (dbPath: string = "./database.sqlite") => {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT,
       specialization TEXT,
-      prefix TEXT
+      prefix TEXT,
+      room TEXT
     );
 
     -- TICKETS (Senhas)
@@ -243,6 +244,11 @@ export const initDb = async (dbPath: string = "./database.sqlite") => {
   if (!doctorColumnNames.includes("prefix")) {
     await db.run("ALTER TABLE doctors ADD COLUMN prefix TEXT");
     console.log("Migration: Added doctors.prefix");
+  }
+
+  if (!doctorColumnNames.includes("room")) {
+    await db.run("ALTER TABLE doctors ADD COLUMN room TEXT");
+    console.log("Migration: Added doctors.room");
   }
 
   const workstationColumns = await db.all(
