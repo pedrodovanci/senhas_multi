@@ -1,8 +1,9 @@
 export interface User {
   id: number;
   username: string;
-  role: "admin" | "attendant" | "cirurgia";
+  role: "admin" | "attendant" | "cirurgia" | "medico";
   active?: boolean;
+  doctor_id?: number | null;
 }
 
 export interface Workstation {
@@ -18,6 +19,8 @@ export interface Doctor {
   name: string;
   specialization: string;
   prefix?: string | null;
+  room?: string | null;
+  medico_username?: string | null;
 }
 
 export interface Ticket {
@@ -48,4 +51,19 @@ export interface QueueStat {
   doctor_name: string;
   count: number;
   oldest_created_at: string | null;
+}
+
+export interface DoctorQueueEntry {
+  id: string;
+  ticketId: number;
+  ticketNumber: string;
+  patientName: string;
+  forwardedAt: string;
+}
+
+export interface DoctorCallingPayload {
+  ticketNumber: string;
+  patientName: string;
+  doctorName: string;
+  room: string;
 }

@@ -106,7 +106,9 @@ export const UsersManager: React.FC = () => {
       setFormData({
         username: user.username,
         password: "",
-        role: user.role,
+        // GET /api/users nunca retorna role 'medico' (Task 8) — contas de médico
+        // são geridas só pela tela de Médicos.
+        role: user.role as "admin" | "attendant" | "cirurgia",
         active: user.active !== undefined ? user.active : true,
       });
     } else {
