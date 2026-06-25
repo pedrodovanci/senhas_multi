@@ -16,6 +16,7 @@ import {
   requireAdmin,
   AuthRequest,
 } from "./middleware/auth";
+import { adicionar as adicionarNaFilaDoMedico } from "./doctorCallQueue";
 
 dotenv.config();
 
@@ -1427,6 +1428,63 @@ const startServer = async (
 
     res.json(updatedTicket);
   });
+
+  // Forward to Doctor (finaliza o atendimento e encaminha para a fila do medico)
+  app.post(
+    "/api/tickets/:id/forward-to-doctor",
+    verifyToken,
+    async (req, res) => {
+      const { id } = req.params;
+      const { doctor_id, patient_name } = req.body;
+
+      if (!doctor_id || typeof patient_name !== "string" || !patient_name.trim()) {
+        return res
+          .status(400)
+          .json({ message: "Médico e nome do paciente são obrigatórios." });
+      }
+
+      const medicoUser = await db.get(
+        "SELECT id FROM users WHERE doctor_id = ? AND role = 'medico' AND active = 1",
+        [doctor_id],
+      );
+      if (!medicoUser) {
+        return res
+          .status(400)
+          .json({ message: "Médico selecionado não tem fila habilitada." });
+      }
+
+      const result = await db.run(
+        "UPDATE tickets SET status = 'finished', finished_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'in_attendance'",
+        [id],
+      );
+
+      if (result.changes === 0) {
+        return res.status(409).json({ message: "Atendimento já foi finalizado." });
+      }
+
+      const updatedTicket = await db.get(
+        `
+          SELECT t.*, d.name as doctor_name, w.name as workstation_name, w.code as workstation_code
+          FROM tickets t
+          LEFT JOIN doctors d ON t.doctor_id = d.id
+          LEFT JOIN workstations w ON t.workstation_id = w.id
+          WHERE t.id = ?
+        `,
+        id,
+      );
+
+      const entry = adicionarNaFilaDoMedico(Number(doctor_id), {
+        ticketId: Number(id),
+        ticketNumber: updatedTicket.number,
+        patientName: patient_name.trim(),
+      });
+
+      broadcast("ticket:finished", updatedTicket);
+      broadcast("doctor:queue-updated", { doctor_id: Number(doctor_id) });
+
+      res.json({ success: true, ticket: updatedTicket, entry });
+    },
+  );
 
   // Dashboard Stats
   app.get("/api/stats", verifyToken, requireAdmin, async (req, res) => {
