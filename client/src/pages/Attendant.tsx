@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { useSocket } from "../contexts/SocketContext";
-import type { Ticket } from "../types";
+import type { Ticket, Doctor } from "../types";
 import {
   Monitor,
   User,
@@ -15,6 +15,7 @@ import {
   History,
   ClipboardList,
   RotateCcw,
+  Stethoscope,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "../utils/api";
@@ -23,6 +24,7 @@ import DoctorQueueGrid from "../components/DoctorQueueGrid";
 import { HistoryModal } from "../components/HistoryModal";
 import { AttendanceModal } from "../components/AttendanceModal";
 import { RequeueModal } from "../components/RequeueModal";
+import { ForwardToDoctorModal } from "../components/ForwardToDoctorModal";
 
 const TicketTimer: React.FC<{ startTime: string }> = ({ startTime }) => {
   const [elapsed, setElapsed] = useState(0);
@@ -76,6 +78,38 @@ const Attendant: React.FC = () => {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isAttendanceOpen, setIsAttendanceOpen] = useState(false);
   const [isRequeueOpen, setIsRequeueOpen] = useState(false);
+  const [isForwardOpen, setIsForwardOpen] = useState(false);
+  const [doctorsWithLogin, setDoctorsWithLogin] = useState<Doctor[]>([]);
+
+  const fetchDoctorsWithLogin = useCallback(async () => {
+    try {
+      const res = await apiFetch(`/api/doctors?has_login=true`, {
+        token,
+        onUnauthorized: logout,
+      });
+      const data = await res.json();
+      setDoctorsWithLogin(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error(err);
+    }
+  }, [token, logout]);
+
+  useEffect(() => {
+    fetchDoctorsWithLogin();
+  }, [fetchDoctorsWithLogin]);
+
+  useEffect(() => {
+    if (!socketContext || !socketContext.socket) return;
+    const handler = () => fetchDoctorsWithLogin();
+    socketContext.on("doctor:created", handler);
+    socketContext.on("doctor:updated", handler);
+    socketContext.on("doctor:deleted", handler);
+    return () => {
+      socketContext.off("doctor:created", handler);
+      socketContext.off("doctor:updated", handler);
+      socketContext.off("doctor:deleted", handler);
+    };
+  }, [socketContext, fetchDoctorsWithLogin]);
 
   useEffect(() => {
     if (!user || !token) navigate("/login");
@@ -339,6 +373,35 @@ const Attendant: React.FC = () => {
     }
   };
 
+  const handleForwardToDoctor = async (
+    doctorId: number,
+    patientName: string,
+  ): Promise<boolean> => {
+    if (!currentTicket) return false;
+    try {
+      const res = await apiFetch(
+        `/api/tickets/${currentTicket.id}/forward-to-doctor`,
+        {
+          method: "POST",
+          token,
+          onUnauthorized: logout,
+          body: JSON.stringify({ doctor_id: doctorId, patient_name: patientName }),
+        },
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        alert(err?.message || "Erro ao encaminhar paciente");
+        return false;
+      }
+      setCurrentTicket(null);
+      return true;
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao encaminhar paciente");
+      return false;
+    }
+  };
+
   // Calculate stats
   const waitingCount = tickets.filter((t) => t.status === "waiting").length;
 
@@ -454,14 +517,25 @@ const Attendant: React.FC = () => {
             )}
 
             {currentTicket.status === "in_attendance" && (
-              <button
-                onClick={() => updateStatus("finished")}
-                disabled={loading}
-                className="bg-white text-gray-900 hover:bg-gray-100 px-6 py-3 rounded-lg font-bold flex items-center gap-2 transition-colors shadow-lg"
-              >
-                <CheckCircle className="w-5 h-5 text-green-600" /> FINALIZAR
-                ATENDIMENTO
-              </button>
+              <>
+                <button
+                  onClick={() => updateStatus("finished")}
+                  disabled={loading}
+                  className="bg-white text-gray-900 hover:bg-gray-100 px-6 py-3 rounded-lg font-bold flex items-center gap-2 transition-colors shadow-lg"
+                >
+                  <CheckCircle className="w-5 h-5 text-green-600" /> FINALIZAR
+                  ATENDIMENTO
+                </button>
+                {doctorsWithLogin.length > 0 && (
+                  <button
+                    onClick={() => setIsForwardOpen(true)}
+                    disabled={loading}
+                    className="bg-blue-500/20 hover:bg-blue-500/40 text-blue-100 border border-blue-400/50 px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-colors"
+                  >
+                    <Stethoscope className="w-4 h-4" /> ENCAMINHAR PARA MÉDICO
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -549,6 +623,12 @@ const Attendant: React.FC = () => {
         onClose={() => setIsRequeueOpen(false)}
         refreshTrigger={refreshTrigger}
         queueSector={queueSector}
+      />
+      <ForwardToDoctorModal
+        isOpen={isForwardOpen}
+        onClose={() => setIsForwardOpen(false)}
+        doctors={doctorsWithLogin}
+        onConfirm={handleForwardToDoctor}
       />
     </div>
   );
