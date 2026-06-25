@@ -547,13 +547,22 @@ const startServer = async (
 
   // Doctors
   app.get("/api/doctors", async (req, res) => {
-    const doctors = await db.all("SELECT * FROM doctors");
+    const { has_login } = req.query;
+    let query = `
+      SELECT d.*, u.username as medico_username
+      FROM doctors d
+      LEFT JOIN users u ON u.doctor_id = d.id AND u.role = 'medico'
+    `;
+    if (has_login === "true") {
+      query += " WHERE u.id IS NOT NULL";
+    }
+    const doctors = await db.all(query);
     res.json(doctors);
   });
 
   // Create Doctor
   app.post("/api/doctors", verifyToken, requireAdmin, async (req, res) => {
-    const { name, specialization, prefix } = req.body;
+    const { name, specialization, prefix, room, username, password } = req.body;
     try {
       const normalizedPrefix = normalizeDoctorPrefix(prefix);
       if (!normalizedPrefix) {
@@ -571,13 +580,40 @@ const startServer = async (
         return res.status(409).json({ error: "Prefixo já está em uso." });
       }
 
+      const wantsLogin = !!(username && String(username).trim() && password && String(password).trim());
+      if (wantsLogin) {
+        const userConflict = await db.get(
+          "SELECT id FROM users WHERE lower(username) = lower(?) LIMIT 1",
+          [String(username).trim()],
+        );
+        if (userConflict) {
+          return res.status(409).json({ error: "Nome de usuário já está em uso." });
+        }
+      }
+
       const result = await db.run(
-        "INSERT INTO doctors (name, specialization, prefix) VALUES (?, ?, ?)",
-        [name, specialization, normalizedPrefix],
+        "INSERT INTO doctors (name, specialization, prefix, room) VALUES (?, ?, ?, ?)",
+        [name, specialization, normalizedPrefix, room || null],
       );
-      const newDoctor = await db.get("SELECT * FROM doctors WHERE id = ?", [
-        result.lastID,
-      ]);
+      const doctorId = result.lastID;
+
+      if (wantsLogin) {
+        const hashedPassword = await bcrypt.hash(String(password).trim(), 10);
+        await db.run(
+          "INSERT INTO users (username, password, role, doctor_id) VALUES (?, ?, 'medico', ?)",
+          [String(username).trim(), hashedPassword, doctorId],
+        );
+      }
+
+      const newDoctor = await db.get(
+        `
+          SELECT d.*, u.username as medico_username
+          FROM doctors d
+          LEFT JOIN users u ON u.doctor_id = d.id AND u.role = 'medico'
+          WHERE d.id = ?
+        `,
+        [doctorId],
+      );
       broadcast("doctor:created", newDoctor);
       res.json(newDoctor);
     } catch (err: any) {
@@ -588,7 +624,7 @@ const startServer = async (
   // Update Doctor
   app.put("/api/doctors/:id", verifyToken, requireAdmin, async (req, res) => {
     const { id } = req.params;
-    const { name, specialization, prefix } = req.body;
+    const { name, specialization, prefix, room, username, password } = req.body;
     try {
       const normalizedPrefix = normalizeDoctorPrefix(prefix);
       if (!normalizedPrefix) {
@@ -607,10 +643,57 @@ const startServer = async (
       }
 
       await db.run(
-        "UPDATE doctors SET name = ?, specialization = ?, prefix = ? WHERE id = ?",
-        [name, specialization, normalizedPrefix, id],
+        "UPDATE doctors SET name = ?, specialization = ?, prefix = ?, room = ? WHERE id = ?",
+        [name, specialization, normalizedPrefix, room || null, id],
       );
-      const updated = await db.get("SELECT * FROM doctors WHERE id = ?", [id]);
+
+      if (username && String(username).trim()) {
+        const trimmedUsername = String(username).trim();
+        const existingLogin = await db.get(
+          "SELECT id FROM users WHERE doctor_id = ? AND role = 'medico'",
+          [id],
+        );
+
+        const userConflict = await db.get(
+          "SELECT id FROM users WHERE lower(username) = lower(?) AND id <> ?",
+          [trimmedUsername, existingLogin?.id ?? -1],
+        );
+        if (userConflict) {
+          return res.status(409).json({ error: "Nome de usuário já está em uso." });
+        }
+
+        if (existingLogin) {
+          if (password && String(password).trim()) {
+            const hashedPassword = await bcrypt.hash(String(password).trim(), 10);
+            await db.run("UPDATE users SET username = ?, password = ? WHERE id = ?", [
+              trimmedUsername,
+              hashedPassword,
+              existingLogin.id,
+            ]);
+          } else {
+            await db.run("UPDATE users SET username = ? WHERE id = ?", [
+              trimmedUsername,
+              existingLogin.id,
+            ]);
+          }
+        } else if (password && String(password).trim()) {
+          const hashedPassword = await bcrypt.hash(String(password).trim(), 10);
+          await db.run(
+            "INSERT INTO users (username, password, role, doctor_id) VALUES (?, ?, 'medico', ?)",
+            [trimmedUsername, hashedPassword, id],
+          );
+        }
+      }
+
+      const updated = await db.get(
+        `
+          SELECT d.*, u.username as medico_username
+          FROM doctors d
+          LEFT JOIN users u ON u.doctor_id = d.id AND u.role = 'medico'
+          WHERE d.id = ?
+        `,
+        [id],
+      );
       broadcast("doctor:updated", updated);
       res.json(updated);
     } catch (err: any) {
@@ -626,6 +709,7 @@ const startServer = async (
     async (req, res) => {
       const { id } = req.params;
       try {
+        await db.run("DELETE FROM users WHERE doctor_id = ? AND role = 'medico'", [id]);
         await db.run("DELETE FROM doctors WHERE id = ?", [id]);
         broadcast("doctor:deleted", { id: Number(id) });
         res.json({ message: "Deleted" });
