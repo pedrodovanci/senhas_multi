@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import type { Doctor } from "../types";
 import { BaseModal } from "./BaseModal";
-import { Edit, Trash, Plus } from "lucide-react";
+import { Edit, Trash, Plus, KeyRound } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useSocket } from "../contexts/SocketContext";
 import { apiFetch } from "../utils/api";
@@ -16,6 +16,9 @@ export const DoctorsManager: React.FC = () => {
     name: "",
     specialization: "",
     prefix: "",
+    room: "",
+    username: "",
+    password: "",
   });
   const [loading, setLoading] = useState(false);
 
@@ -73,12 +76,21 @@ export const DoctorsManager: React.FC = () => {
     e.preventDefault();
     setLoading(true);
     try {
+      const payload = {
+        name: formData.name,
+        specialization: formData.specialization,
+        prefix: formData.prefix,
+        room: formData.room,
+        username: formData.username,
+        password: formData.password,
+      };
+
       if (editingDoctor) {
         const res = await apiFetch(`/api/doctors/${editingDoctor.id}`, {
           token,
           onUnauthorized: logout,
           method: "PUT",
-          body: JSON.stringify(formData),
+          body: JSON.stringify(payload),
         });
         if (!res.ok) {
           const data = await res.json().catch(() => null);
@@ -92,7 +104,7 @@ export const DoctorsManager: React.FC = () => {
           token,
           onUnauthorized: logout,
           method: "POST",
-          body: JSON.stringify(formData),
+          body: JSON.stringify(payload),
         });
         if (!res.ok) {
           const data = await res.json().catch(() => null);
@@ -140,10 +152,20 @@ export const DoctorsManager: React.FC = () => {
         name: doctor.name,
         specialization: doctor.specialization,
         prefix: doctor.prefix || "",
+        room: doctor.room || "",
+        username: doctor.medico_username || "",
+        password: "",
       });
     } else {
       setEditingDoctor(null);
-      setFormData({ name: "", specialization: "", prefix: "" });
+      setFormData({
+        name: "",
+        specialization: "",
+        prefix: "",
+        room: "",
+        username: "",
+        password: "",
+      });
     }
     setIsModalOpen(true);
   };
@@ -151,7 +173,14 @@ export const DoctorsManager: React.FC = () => {
   const closeModal = () => {
     setIsModalOpen(false);
     setEditingDoctor(null);
-    setFormData({ name: "", specialization: "", prefix: "" });
+    setFormData({
+      name: "",
+      specialization: "",
+      prefix: "",
+      room: "",
+      username: "",
+      password: "",
+    });
   };
 
   return (
@@ -177,6 +206,12 @@ export const DoctorsManager: React.FC = () => {
               <th className="p-4 text-sm font-semibold text-gray-600">
                 Especialidade
               </th>
+              <th className="p-4 text-sm font-semibold text-gray-600">
+                Sala
+              </th>
+              <th className="p-4 text-sm font-semibold text-gray-600">
+                Login
+              </th>
               <th className="p-4 text-sm font-semibold text-gray-600 text-right">
                 Ações
               </th>
@@ -193,6 +228,18 @@ export const DoctorsManager: React.FC = () => {
                   {(doctor.prefix || "").toUpperCase()}
                 </td>
                 <td className="p-4 text-gray-600">{doctor.specialization}</td>
+                <td className="p-4 text-gray-600">{doctor.room || "—"}</td>
+                <td className="p-4">
+                  {doctor.medico_username ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-green-100 text-green-700">
+                      <KeyRound size={12} /> {doctor.medico_username}
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-500">
+                      Sem login
+                    </span>
+                  )}
+                </td>
                 <td className="p-4 flex justify-end gap-2">
                   <button
                     onClick={() => openModal(doctor)}
@@ -211,7 +258,7 @@ export const DoctorsManager: React.FC = () => {
             ))}
             {doctors.length === 0 && (
               <tr>
-                <td colSpan={4} className="p-8 text-center text-gray-400">
+                <td colSpan={6} className="p-8 text-center text-gray-400">
                   Nenhum médico cadastrado.
                 </td>
               </tr>
@@ -271,6 +318,61 @@ export const DoctorsManager: React.FC = () => {
               className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
             />
           </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Sala / Consultório
+            </label>
+            <input
+              type="text"
+              value={formData.room}
+              onChange={(e) =>
+                setFormData({ ...formData, room: e.target.value })
+              }
+              placeholder="Ex.: Sala 3"
+              className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
+            />
+          </div>
+
+          <div className="border-t border-gray-100 pt-4">
+            <p className="text-xs text-gray-400 mb-3">
+              Login para chamar pacientes pelo terminal (opcional). Deixe em
+              branco se este médico não vai usar a fila.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Nome de usuário
+                </label>
+                <input
+                  type="text"
+                  value={formData.username}
+                  onChange={(e) =>
+                    setFormData({ ...formData, username: e.target.value })
+                  }
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Senha{" "}
+                  {editingDoctor?.medico_username && (
+                    <span className="text-gray-400 font-normal">
+                      (deixe em branco para manter a atual)
+                    </span>
+                  )}
+                </label>
+                <input
+                  type="password"
+                  value={formData.password}
+                  onChange={(e) =>
+                    setFormData({ ...formData, password: e.target.value })
+                  }
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
+                />
+              </div>
+            </div>
+          </div>
+
           <div className="flex justify-end gap-3 pt-4">
             <button
               type="button"
