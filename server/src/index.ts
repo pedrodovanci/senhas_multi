@@ -7,6 +7,7 @@ import fs from "fs";
 import path from "path";
 import net from "net";
 import dotenv from "dotenv";
+import crypto from "crypto";
 import { initDb } from "./database";
 import jwt from "jsonwebtoken";
 import {
@@ -24,6 +25,7 @@ const wss = new WebSocketServer({ server: httpServer });
 
 const PRINT_DEDUPE_WINDOW_MS = 5000;
 const recentPrints = new Map<string, number>();
+const SERVER_BOOT_ID = crypto.randomUUID();
 
 const shouldPrintTicket = (ticket: any) => {
   const key = String(ticket?.id ?? ticket?.number ?? "");
@@ -1417,6 +1419,7 @@ const startServer = async (
   // --- WebSocket ---
   const wsSessions = new Map<number, { userId: number; timer: NodeJS.Timeout | null }>();
   wss.on("connection", (ws) => {
+    ws.send(JSON.stringify({ type: "server:boot", data: { bootId: SERVER_BOOT_ID } }));
     let wsWorkstation: number | null = null;
     let wsUser: number | null = null;
     ws.on("message", async (data) => {
