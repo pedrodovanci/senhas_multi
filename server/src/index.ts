@@ -318,7 +318,12 @@ const startServer = async (
     res.json({
       success: true,
       token,
-      user: { id: user.id, username: user.username, role: user.role },
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        doctor_id: user.doctor_id ?? null,
+      },
     });
   });
 
