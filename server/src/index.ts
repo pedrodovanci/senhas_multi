@@ -14,9 +14,15 @@ import {
   generateToken,
   verifyToken,
   requireAdmin,
+  requireMedico,
   AuthRequest,
 } from "./middleware/auth";
-import { adicionar as adicionarNaFilaDoMedico } from "./doctorCallQueue";
+import {
+  adicionar as adicionarNaFilaDoMedico,
+  listar as listarFilaDoMedico,
+  chamarProximo as chamarProximoNaFilaDoMedico,
+  chamarEspecifico as chamarEspecificoNaFilaDoMedico,
+} from "./doctorCallQueue";
 
 dotenv.config();
 
@@ -1483,6 +1489,62 @@ const startServer = async (
       broadcast("doctor:queue-updated", { doctor_id: Number(doctor_id) });
 
       res.json({ success: true, ticket: updatedTicket, entry });
+    },
+  );
+
+  // Doctor Queue (fila do medico, em memoria)
+  app.get(
+    "/api/doctor-queue/mine",
+    verifyToken,
+    requireMedico,
+    async (req: AuthRequest, res) => {
+      const entries = listarFilaDoMedico(req.user!.doctor_id!);
+      res.json(entries);
+    },
+  );
+
+  app.post(
+    "/api/doctor-queue/call-next",
+    verifyToken,
+    requireMedico,
+    async (req: AuthRequest, res) => {
+      const doctorId = req.user!.doctor_id!;
+      const entry = chamarProximoNaFilaDoMedico(doctorId);
+      if (!entry) {
+        return res.status(404).json({ message: "Fila vazia." });
+      }
+      const doctor = await db.get("SELECT name, room FROM doctors WHERE id = ?", [doctorId]);
+      broadcast("doctor:calling", {
+        ticketNumber: entry.ticketNumber,
+        patientName: entry.patientName,
+        doctorName: doctor?.name ?? "",
+        room: doctor?.room ?? "",
+      });
+      broadcast("doctor:queue-updated", { doctor_id: doctorId });
+      res.json(entry);
+    },
+  );
+
+  app.post(
+    "/api/doctor-queue/call/:entryId",
+    verifyToken,
+    requireMedico,
+    async (req: AuthRequest, res) => {
+      const doctorId = req.user!.doctor_id!;
+      const entryId = String(req.params.entryId);
+      const entry = chamarEspecificoNaFilaDoMedico(doctorId, entryId);
+      if (!entry) {
+        return res.status(404).json({ message: "Paciente não encontrado na fila." });
+      }
+      const doctor = await db.get("SELECT name, room FROM doctors WHERE id = ?", [doctorId]);
+      broadcast("doctor:calling", {
+        ticketNumber: entry.ticketNumber,
+        patientName: entry.patientName,
+        doctorName: doctor?.name ?? "",
+        room: doctor?.room ?? "",
+      });
+      broadcast("doctor:queue-updated", { doctor_id: doctorId });
+      res.json(entry);
     },
   );
 
