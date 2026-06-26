@@ -81,7 +81,7 @@ const Admin: React.FC = () => {
   }, [user, token, navigate]);
 
   return (
-    <div className="min-h-screen bg-gray-100 flex">
+    <div className="h-screen bg-gray-100 flex overflow-hidden">
       {/* Sidebar */}
       <aside className="w-64 bg-white shadow-md flex flex-col hidden md:flex">
         <div className="p-6 border-b border-gray-200">
