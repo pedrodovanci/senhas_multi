@@ -19,21 +19,37 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const auth = useAuth();
 
   useEffect(() => {
-    let ws: WebSocket;
+    // Sob StrictMode (ou em maquinas/conexoes mais lentas), o React monta
+    // este efeito, limpa, e monta de novo imediatamente. Se a PRIMEIRA
+    // conexao terminar o handshake e abrir DEPOIS desse ciclo de limpeza
+    // (ws.close() chamado em CONNECTING nao garante abortar antes do
+    // 'open'), ela publica um segundo socket vivo processando os mesmos
+    // broadcasts — cada chamada de senha soa/pisca em dobro (ou mais, se
+    // acontecer de novo numa reconexao). `cancelled` bloqueia isso checando
+    // no exato momento de uso (onopen/onmessage/onclose), não confiando só
+    // no timing do close().
+    let cancelled = false;
+    let ws: WebSocket | null = null;
     let reconnectInterval: ReturnType<typeof setTimeout> | null = null;
     let isFirst = true;
 
     const connect = () => {
-      ws = new WebSocket(WS_URL);
+      if (cancelled) return;
+      const socket = new WebSocket(WS_URL);
+      ws = socket;
 
-      ws.onopen = () => {
+      socket.onopen = () => {
+        if (cancelled) {
+          socket.close();
+          return;
+        }
         console.log('Connected to WebSocket');
-        setSocket(ws);
+        setSocket(socket);
         setIsConnected(true);
         const wsData = auth.workstation;
         const token = auth.token;
-        if (ws && token && wsData) {
-          ws.send(JSON.stringify({ type: 'auth', token, workstation_id: wsData.id }));
+        if (token && wsData) {
+          socket.send(JSON.stringify({ type: 'auth', token, workstation_id: wsData.id }));
         }
         if (!isFirst) {
           const callbacks = listeners.get('ws:reconnected');
@@ -42,7 +58,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         isFirst = false;
       };
 
-      ws.onmessage = (event: MessageEvent<string>) => {
+      socket.onmessage = (event: MessageEvent<string>) => {
+        if (cancelled) return;
         try {
           const parsed = JSON.parse(event.data) as { type?: string; data?: unknown };
           if (!parsed.type) return;
@@ -55,22 +72,24 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       };
 
-      ws.onclose = () => {
+      socket.onclose = () => {
+        if (cancelled) return;
         console.log('Disconnected from WebSocket');
         setSocket(null);
         setIsConnected(false);
         reconnectInterval = setTimeout(connect, 3000);
       };
 
-      ws.onerror = (event: Event) => {
+      socket.onerror = (event: Event) => {
         console.error('WebSocket error:', event);
-        ws.close();
+        socket.close();
       };
     };
 
     connect();
 
     return () => {
+      cancelled = true;
       if (ws) ws.close();
       if (reconnectInterval) clearTimeout(reconnectInterval);
     };
