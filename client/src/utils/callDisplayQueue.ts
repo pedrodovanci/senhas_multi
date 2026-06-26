@@ -19,8 +19,13 @@ export class CallDisplayQueue<T> {
   constructor(options: CallDisplayQueueOptions<T>) {
     this.minDisplayMs = options.minDisplayMs;
     this.onShow = options.onShow;
-    this.setTimer = options.setTimer ?? setTimeout;
-    this.clearTimer = options.clearTimer ?? clearTimeout;
+    // setTimeout/clearTimeout são métodos de Window e exigem `this === window`
+    // quando chamados nativamente. Armazená-los direto em this.setTimer e
+    // invocá-los como this.setTimer(...) muda o receiver e lança
+    // "TypeError: Illegal invocation" no navegador (não reproduz em Node).
+    // O wrapper em arrow function invoca como chamada solta, sem esse problema.
+    this.setTimer = options.setTimer ?? ((cb, ms) => setTimeout(cb, ms));
+    this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
   }
 
   push(item: T): void {

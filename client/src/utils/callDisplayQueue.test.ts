@@ -88,3 +88,41 @@ describe("CallDisplayQueue", () => {
     expect(onShow).toHaveBeenCalledWith("C001");
   });
 });
+
+describe("CallDisplayQueue sem mock de timer (reproduz checagem de receiver do navegador)", () => {
+  it("nao lanca 'Illegal invocation' usando setTimeout/clearTimeout globais reais", () => {
+    // No navegador, setTimeout/clearTimeout são métodos de Window e lançam
+    // TypeError se invocados com `this` diferente de window — isso não
+    // reproduz em Node (onde são funções soltas), então simulamos a checagem
+    // de receiver aqui pra pegar essa regressão sem precisar de jsdom/browser.
+    const realSetTimeout = globalThis.setTimeout;
+    const realClearTimeout = globalThis.clearTimeout;
+
+    function strictSetTimeout(this: unknown, cb: () => void, ms: number) {
+      if (this !== undefined && this !== globalThis) {
+        throw new TypeError("Illegal invocation");
+      }
+      return realSetTimeout(cb, ms);
+    }
+    function strictClearTimeout(this: unknown, handle: ReturnType<typeof setTimeout>) {
+      if (this !== undefined && this !== globalThis) {
+        throw new TypeError("Illegal invocation");
+      }
+      return realClearTimeout(handle);
+    }
+
+    globalThis.setTimeout = strictSetTimeout as typeof setTimeout;
+    globalThis.clearTimeout = strictClearTimeout as typeof clearTimeout;
+
+    try {
+      const onShow = vi.fn();
+      const queue = new CallDisplayQueue<string>({ minDisplayMs: 10, onShow });
+
+      expect(() => queue.push("C001")).not.toThrow();
+      expect(() => queue.destroy()).not.toThrow();
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+      globalThis.clearTimeout = realClearTimeout;
+    }
+  });
+});
