@@ -10,3 +10,8 @@ dist
 .env.*
 print-agent/config.json
 .vscode
+.dashboard-test-seed.json
+.claude/
+.trae/
+/image.png
+/package-lock.json
