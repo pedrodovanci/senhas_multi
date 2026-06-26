@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { useSocket } from "../contexts/SocketContext";
 import type { Ticket, Doctor } from "../types";
@@ -73,6 +73,18 @@ const Attendant: React.FC = () => {
   const [currentTicket, setCurrentTicket] = useState<Ticket | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  // Guarda o id da última senha que finalizamos/encaminhamos localmente. Um
+  // broadcast "ticket:calling" da nossa própria chamada (ou um fetchData()
+  // disparado por uma mudança de status anterior) pode chegar atrasado e
+  // ressuscitaria currentTicket com dados velhos — esse ref bloqueia esse eco
+  // tardio especificamente para a senha que já resolvemos.
+  const lastResolvedTicketIdRef = useRef<number | null>(null);
+  // Espelha currentTicket sem entrar na dependência do efeito de socket —
+  // assim o efeito não precisa recriar todos os listeners (e disparar
+  // fetchData() de novo) a cada mudança de status, o que é exatamente o que
+  // abre a janela de corrida acima.
+  const currentTicketRef = useRef<Ticket | null>(null);
+  currentTicketRef.current = currentTicket;
 
   // Modals
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -143,7 +155,10 @@ const Attendant: React.FC = () => {
         setRefreshTrigger((prev) => prev + 1);
 
         // If updated ticket is mine, update currentTicket
-        if (currentTicket && currentTicket.id === updatedTicket.id) {
+        if (
+          currentTicketRef.current &&
+          currentTicketRef.current.id === updatedTicket.id
+        ) {
           setCurrentTicket(updatedTicket);
         }
       };
@@ -152,6 +167,7 @@ const Attendant: React.FC = () => {
         setTickets((prev) => prev.filter((t) => t.id !== callingTicket.id));
         setRefreshTrigger((prev) => prev + 1);
 
+        if (callingTicket.id === lastResolvedTicketIdRef.current) return;
         if (callingTicket.workstation_id === workstation?.id) {
           setCurrentTicket(callingTicket);
         }
@@ -159,7 +175,10 @@ const Attendant: React.FC = () => {
 
       const handleFinished = (ticket: Ticket) => {
         setRefreshTrigger((prev) => prev + 1);
-        if (currentTicket && currentTicket.id === ticket.id) {
+        if (
+          currentTicketRef.current &&
+          currentTicketRef.current.id === ticket.id
+        ) {
           setCurrentTicket(null);
         }
       };
@@ -197,7 +216,14 @@ const Attendant: React.FC = () => {
         socketContext.off("ws:reconnected", handleReconnected);
       };
     }
-  }, [socketContext, user, navigate, currentTicket, workstation]);
+    // currentTicket fica de fora de propósito: ele já é mantido via
+    // currentTicketRef acima. Colocá-lo aqui faria este efeito inteiro
+    // (incluindo o fetchData() do topo) recriar a cada troca de status,
+    // abrindo uma janela de corrida onde um fetchData()/broadcast antigo
+    // ainda em voo podia resolver depois de um setCurrentTicket(null) e
+    // ressuscitar a senha (bug: botão "Encaminhar"/"Finalizar" não
+    // desaparecia depois de resolver a senha).
+  }, [socketContext, user, navigate, workstation]);
 
   const fetchData = async () => {
     try {
@@ -226,7 +252,7 @@ const Attendant: React.FC = () => {
             t.workstation_id === workstation?.id,
         );
 
-        if (myActive) {
+        if (myActive && myActive.id !== lastResolvedTicketIdRef.current) {
           setCurrentTicket(myActive);
         }
       }
@@ -361,6 +387,7 @@ const Attendant: React.FC = () => {
       const data = await res.json();
 
       if (status === "finished" || status === "missed") {
+        lastResolvedTicketIdRef.current = currentTicket.id;
         setCurrentTicket(null);
       } else {
         setCurrentTicket(data);
@@ -393,6 +420,7 @@ const Attendant: React.FC = () => {
         alert(err?.message || "Erro ao encaminhar paciente");
         return false;
       }
+      lastResolvedTicketIdRef.current = currentTicket.id;
       setCurrentTicket(null);
       return true;
     } catch (err) {
