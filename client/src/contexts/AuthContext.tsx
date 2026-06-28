@@ -41,9 +41,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('user', JSON.stringify(userData));
     localStorage.setItem('token', authToken);
     
+    // Sempre reflete o que ESTE login confirmou — nunca herda um guichê
+    // salvo de uma sessão anterior que não foi encerrada com logout (ex.:
+    // aba fechada sem clicar em "Sair").
     if (wsData) {
       setWorkstation(wsData);
       localStorage.setItem('workstation', JSON.stringify(wsData));
+    } else {
+      setWorkstation(null);
+      localStorage.removeItem('workstation');
     }
   };
 

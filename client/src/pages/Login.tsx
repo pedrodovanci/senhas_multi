@@ -124,9 +124,15 @@ const Login: React.FC = () => {
               >
                 <option value="">Selecione seu Guichê/Sala</option>
                 {workstations.map(ws => {
+                  // "(ocupado)" é só um aviso visual — quem decide se a
+                  // entrada é permitida é o backend: ele libera se for o
+                  // mesmo usuário que já está com o guichê, e bloqueia com
+                  // mensagem clara se for outra pessoa. Por isso a opção
+                  // não fica desabilitada aqui (a tela não sabe ainda quem
+                  // está logando).
                   const occupied = !!ws.current_user_id && ws.code !== 'RET01';
                   return (
-                    <option key={ws.id} value={ws.id} disabled={occupied}>
+                    <option key={ws.id} value={ws.id}>
                       {ws.name}{occupied ? ' (ocupado)' : ''}
                     </option>
                   );

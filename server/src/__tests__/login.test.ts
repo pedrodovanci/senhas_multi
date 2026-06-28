@@ -42,10 +42,19 @@ describe("/api/login com doctor_id", () => {
   });
 
   it("login de atendente retorna doctor_id null", async () => {
+    const ws = await ctx.db.get("SELECT id FROM workstations WHERE code = 'G01'");
+    const res = await request(ctx.app)
+      .post("/api/login")
+      .send({ username: "atendente1", password: "1234", workstation_id: ws.id });
+
+    expect(res.body.user.doctor_id).toBeNull();
+  });
+
+  it("login de atendente sem posto de trabalho é rejeitado", async () => {
     const res = await request(ctx.app)
       .post("/api/login")
       .send({ username: "atendente1", password: "1234" });
 
-    expect(res.body.user.doctor_id).toBeNull();
+    expect(res.status).toBe(400);
   });
 });

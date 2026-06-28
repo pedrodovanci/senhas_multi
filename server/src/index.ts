@@ -224,7 +224,22 @@ const startServer = async (
 ) => {
   const db = await initDb(dbPath);
 
-  // Removemos a lógica de marcar tickets como "missed" na inicialização 
+  // db é uma única conexão SQLite compartilhada por todas as requisições.
+  // BEGIN IMMEDIATE/COMMIT manuais de requisições concorrentes podem se
+  // entrelaçar nessa conexão única e corromper o estado da transação
+  // (ex.: "cannot commit - no transaction is active"). withWriteLock
+  // serializa esses blocos em memória para que nunca se sobreponham.
+  let writeQueue: Promise<void> = Promise.resolve();
+  const withWriteLock = <T>(fn: () => Promise<T>): Promise<T> => {
+    const result = writeQueue.then(fn);
+    writeQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
+
+  // Removemos a lógica de marcar tickets como "missed" na inicialização
   // para garantir que o sistema não volte zerado após queda de energia.
   console.log("[Startup] Mantendo estado das senhas para recuperação de queda de energia.");
 
@@ -276,6 +291,19 @@ const startServer = async (
       return res
         .status(401)
         .json({ success: false, message: "Credenciais inválidas" });
+    }
+
+    // Atendente e cirurgia operam senhas atreladas a um guichê/posto — sem
+    // isso, a senha chamada não aparece em nenhum guichê no painel de TV.
+    // Admin e médico não dependem de um posto físico, então ficam de fora.
+    if (
+      (user.role === "attendant" || user.role === "cirurgia") &&
+      !workstation_id
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Selecione um posto de trabalho para continuar.",
+      });
     }
 
     // Generate Token
@@ -412,13 +440,15 @@ const startServer = async (
         current_user_id: null,
       });
 
-      // Auto-mark current tickets as 'missed' if in attendance? Or just leave them?
-      // Plan says: "Senhas em EM_ATENDIMENTO naquele guichê devem ser marcadas como NAO_COMPARECEU automaticamente."
+      // Plan: "Senhas em EM_ATENDIMENTO naquele guichê devem ser marcadas como
+      // NAO_COMPARECEU automaticamente." Inclui também 'calling' (senha chamada
+      // mas nunca iniciada) para não deixar senha travada nesse guichê quando
+      // o próximo usuário fizer login.
       await db.run(
         `
-            UPDATE tickets 
-            SET status = 'missed', finished_at = CURRENT_TIMESTAMP 
-            WHERE workstation_id = ? AND status = 'in_attendance'
+            UPDATE tickets
+            SET status = 'missed', finished_at = CURRENT_TIMESTAMP
+            WHERE workstation_id = ? AND status IN ('in_attendance', 'calling')
           `,
         [workstation_id],
       );
@@ -855,6 +885,7 @@ const startServer = async (
     const queue_sector =
       subtype === "agendamento_cirurgico" ? "cirurgia" : "recepcao";
 
+    await withWriteLock(async () => {
     try {
       await db.run("BEGIN IMMEDIATE");
 
@@ -918,6 +949,7 @@ const startServer = async (
         .status(500)
         .json({ message: "Failed to create ticket", error: err.message });
     }
+    });
   });
 
   // Get History (Last 10 called tickets)
@@ -1000,11 +1032,12 @@ const startServer = async (
       });
     }
 
-    // Update ticket
-    await db.run(
+    // Update ticket (guarda status = 'missed' de novo para não reinserir 2x
+    // se o botão for clicado/chamado em duplicidade).
+    const result = await db.run(
       `
-        UPDATE tickets 
-        SET status = 'waiting', 
+        UPDATE tickets
+        SET status = 'waiting',
             requeued_at = CURRENT_TIMESTAMP,
             requeue_count = IFNULL(requeue_count, 0) + 1,
             -- Clear calling data so it looks like new waiting
@@ -1013,10 +1046,16 @@ const startServer = async (
             finished_at = NULL,
             workstation_id = NULL,
             called_by_user_id = NULL
-        WHERE id = ?
+        WHERE id = ? AND status = 'missed'
       `,
       [id],
     );
+
+    if (result.changes === 0) {
+      return res.status(409).json({
+        message: "Senha já foi reinserida na fila.",
+      });
+    }
 
     const updatedTicket = await db.get(
       `
@@ -1157,6 +1196,7 @@ const startServer = async (
   app.post("/api/tickets/call-next", verifyToken, async (req, res) => {
     const { workstation_id, user_id, doctor_id, queue_sector } = req.body;
 
+    await withWriteLock(async () => {
     try {
       await db.run("BEGIN IMMEDIATE"); // Locks db for writing
 
@@ -1237,6 +1277,7 @@ const startServer = async (
         .status(500)
         .json({ message: "Erro ao chamar senha. Tente novamente." });
     }
+    });
   });
 
   // Call Specific Ticket
@@ -1246,6 +1287,7 @@ const startServer = async (
       `[call-specific] Request: workstation_id=${workstation_id}, user_id=${user_id}, ticket_id=${ticket_id}`,
     );
 
+    await withWriteLock(async () => {
     try {
       await db.run("BEGIN IMMEDIATE");
 
@@ -1308,12 +1350,14 @@ const startServer = async (
         .status(500)
         .json({ message: "Erro ao chamar senha. Tente novamente." });
     }
+    });
   });
 
   // Call Random Ticket
   app.post("/api/tickets/call-random", verifyToken, async (req, res) => {
     const { workstation_id, user_id } = req.body;
 
+    await withWriteLock(async () => {
     try {
       await db.run("BEGIN IMMEDIATE");
 
@@ -1372,6 +1416,7 @@ const startServer = async (
         .status(500)
         .json({ message: "Erro ao chamar senha. Tente novamente." });
     }
+    });
   });
 
   // Update Ticket Status (Start, Finish, Missed)
