@@ -14,6 +14,81 @@ export const initDb = async (dbPath: string = "./database.sqlite") => {
   await db.run("PRAGMA busy_timeout = 5000"); // Wait up to 5s if locked
   await db.run("PRAGMA synchronous = NORMAL"); // Balance between safety and performance
 
+  // Repair: SQLite 3.26+ silently rewrites FK references in all tables when
+  // "ALTER TABLE users RENAME TO users_old" runs. After DROP TABLE users_old,
+  // workstations and tickets still point to the now-gone users_old, causing
+  // "no such table: main.users_old" on the next FK-enforced query.
+  // Fix: detect affected tables and rebuild them inside a transaction.
+  const brokenFkRows = await db.all(
+    "SELECT name FROM sqlite_master WHERE type='table' AND instr(sql, 'users_old') > 0"
+  );
+  if (brokenFkRows.length > 0) {
+    const names = (brokenFkRows as any[]).map((r) => r.name as string);
+    console.log(`[Migration] Reparando FK corrompidas nas tabelas: ${names.join(", ")}`);
+    await db.run("PRAGMA foreign_keys=OFF");
+    await db.run("PRAGMA legacy_alter_table=ON");
+    await db.run("BEGIN TRANSACTION");
+    try {
+      // Repair workstations first (tickets FKs to workstations)
+      const repairOrder = names.sort((a, b) =>
+        a === "workstations" ? -1 : b === "workstations" ? 1 : 0
+      );
+      for (const tbl of repairOrder) {
+        const cols = (await db.all(`PRAGMA table_info(${tbl})`)).map((c: any) => c.name);
+        const colList = cols.join(", ");
+        const tmp = `${tbl}_fkrepair`;
+        await db.run(`DROP TABLE IF EXISTS ${tmp}`);
+        await db.run(`ALTER TABLE ${tbl} RENAME TO ${tmp}`);
+        if (tbl === "workstations") {
+          await db.run(`
+            CREATE TABLE workstations (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              code TEXT UNIQUE,
+              name TEXT,
+              current_user_id INTEGER,
+              is_active BOOLEAN DEFAULT 1,
+              FOREIGN KEY(current_user_id) REFERENCES users(id)
+            )
+          `);
+        } else if (tbl === "tickets") {
+          await db.run(`
+            CREATE TABLE tickets (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              number TEXT,
+              type TEXT CHECK(type IN ('consulta', 'cirurgia', 'outros')),
+              subtype TEXT,
+              queue_sector TEXT NOT NULL DEFAULT 'recepcao',
+              doctor_id INTEGER,
+              status TEXT CHECK(status IN ('waiting', 'calling', 'in_attendance', 'finished', 'missed')) DEFAULT 'waiting',
+              call_type TEXT CHECK(call_type IN ('FIFO', 'RANDOM')),
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              called_at DATETIME,
+              started_at DATETIME,
+              finished_at DATETIME,
+              workstation_id INTEGER,
+              called_by_user_id INTEGER,
+              requeued_at DATETIME,
+              requeue_count INTEGER DEFAULT 0,
+              is_specific_call BOOLEAN DEFAULT 0,
+              FOREIGN KEY(doctor_id) REFERENCES doctors(id),
+              FOREIGN KEY(workstation_id) REFERENCES workstations(id),
+              FOREIGN KEY(called_by_user_id) REFERENCES users(id)
+            )
+          `);
+        }
+        await db.run(`INSERT INTO ${tbl} (${colList}) SELECT ${colList} FROM ${tmp}`);
+        await db.run(`DROP TABLE ${tmp}`);
+        console.log(`[Migration] FK reparada: ${tbl}`);
+      }
+      await db.run("COMMIT");
+    } catch (e) {
+      await db.run("ROLLBACK");
+      throw e;
+    }
+    await db.run("PRAGMA legacy_alter_table=OFF");
+    await db.run("PRAGMA foreign_keys=ON");
+  }
+
   // Check for interrupted migration
   const ticketsOld = await db.get(
     "SELECT name FROM sqlite_master WHERE type='table' AND name='tickets_old'",
@@ -47,6 +122,7 @@ export const initDb = async (dbPath: string = "./database.sqlite") => {
   if (usersTable && !usersTable.sql.includes("'cirurgia'")) {
     console.log("Migrating users table to support 'cirurgia' role...");
     await db.run("PRAGMA foreign_keys=OFF");
+    await db.run("PRAGMA legacy_alter_table=ON");
     await db.run("ALTER TABLE users RENAME TO users_old");
     await db.run(`
       CREATE TABLE users (
@@ -61,6 +137,7 @@ export const initDb = async (dbPath: string = "./database.sqlite") => {
       "INSERT INTO users (id, username, password, role, active) SELECT id, username, password, role, active FROM users_old",
     );
     await db.run("DROP TABLE users_old");
+    await db.run("PRAGMA legacy_alter_table=OFF");
     await db.run("PRAGMA foreign_keys=ON");
     console.log("Users table migrated.");
   }
@@ -72,6 +149,7 @@ export const initDb = async (dbPath: string = "./database.sqlite") => {
   if (usersTableForMedico && !usersTableForMedico.sql.includes("'medico'")) {
     console.log("Migrating users table to support 'medico' role...");
     await db.run("PRAGMA foreign_keys=OFF");
+    await db.run("PRAGMA legacy_alter_table=ON");
     await db.run("ALTER TABLE users RENAME TO users_old");
     await db.run(`
       CREATE TABLE users (
@@ -87,6 +165,7 @@ export const initDb = async (dbPath: string = "./database.sqlite") => {
       "INSERT INTO users (id, username, password, role, active) SELECT id, username, password, role, active FROM users_old",
     );
     await db.run("DROP TABLE users_old");
+    await db.run("PRAGMA legacy_alter_table=OFF");
     await db.run("PRAGMA foreign_keys=ON");
     console.log("Users table migrated for 'medico' role.");
   }

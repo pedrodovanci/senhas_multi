@@ -25,6 +25,7 @@ import { HistoryModal } from "../components/HistoryModal";
 import { AttendanceModal } from "../components/AttendanceModal";
 import { RequeueModal } from "../components/RequeueModal";
 import { ForwardToDoctorModal } from "../components/ForwardToDoctorModal";
+import { OrphanedTicketModal } from "../components/OrphanedTicketModal";
 
 const TicketTimer: React.FC<{ startTime: string }> = ({ startTime }) => {
   const [elapsed, setElapsed] = useState(0);
@@ -86,6 +87,9 @@ const Attendant: React.FC = () => {
   const currentTicketRef = useRef<Ticket | null>(null);
   currentTicketRef.current = currentTicket;
 
+  const initialFetchDoneRef = useRef(false);
+  const [orphanedTicket, setOrphanedTicket] = useState<Ticket | null>(null);
+
   // Modals
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isAttendanceOpen, setIsAttendanceOpen] = useState(false);
@@ -122,6 +126,16 @@ const Attendant: React.FC = () => {
       socketContext.off("doctor:deleted", handler);
     };
   }, [socketContext, fetchDoctorsWithLogin]);
+
+  useEffect(() => {
+    if (!currentTicket) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [currentTicket]);
 
   useEffect(() => {
     if (!user || !token) navigate("/login");
@@ -226,6 +240,8 @@ const Attendant: React.FC = () => {
   }, [socketContext, user, navigate, workstation]);
 
   const fetchData = async () => {
+    const isInitial = !initialFetchDoneRef.current;
+    initialFetchDoneRef.current = true;
     try {
       const ticketsRes = await apiFetch(
         `/api/tickets?status=waiting&queue_sector=${queueSector}`,
@@ -254,6 +270,7 @@ const Attendant: React.FC = () => {
 
         if (myActive && myActive.id !== lastResolvedTicketIdRef.current) {
           setCurrentTicket(myActive);
+          if (isInitial) setOrphanedTicket(myActive);
         }
       }
     } catch (error) {
@@ -633,6 +650,18 @@ const Attendant: React.FC = () => {
       </main>
 
       {/* Modals */}
+      {orphanedTicket && (
+        <OrphanedTicketModal
+          ticket={orphanedTicket}
+          loading={loading}
+          doctors={doctorsWithLogin}
+          onInitiate={async () => { await updateStatus("in_attendance"); setOrphanedTicket(null); }}
+          onMissed={async () => { await updateStatus("missed"); setOrphanedTicket(null); }}
+          onRecall={async () => { await handleRecall(); setOrphanedTicket(null); }}
+          onFinish={async () => { await updateStatus("finished"); setOrphanedTicket(null); }}
+          onForwardOpen={() => { setOrphanedTicket(null); setIsForwardOpen(true); }}
+        />
+      )}
       <HistoryModal
         isOpen={isHistoryOpen}
         onClose={() => setIsHistoryOpen(false)}
