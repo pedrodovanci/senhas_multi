@@ -208,9 +208,24 @@ const normalizeWorkstationCode = (value: unknown) => {
   return normalized;
 };
 
+const TICKET_WS_EVENTS = new Set([
+  "ticket:created", "ticket:calling", "ticket:started",
+  "ticket:finished", "ticket:missed", "ticket:requeued", "ticket:updated",
+]);
+
+const normalizeTicketDates = (t: any) => ({
+  ...t,
+  created_at: toIsoUtc(t.created_at),
+  called_at:  toIsoUtc(t.called_at),
+  started_at: toIsoUtc(t.started_at),
+  finished_at: toIsoUtc(t.finished_at),
+  requeued_at: toIsoUtc(t.requeued_at),
+});
+
 // Helper to broadcast to all connected clients
 const broadcast = (type: string, data: any) => {
-  const message = JSON.stringify({ type, data });
+  const payload = TICKET_WS_EVENTS.has(type) ? normalizeTicketDates(data) : data;
+  const message = JSON.stringify({ type, data: payload });
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(message);
