@@ -71,7 +71,7 @@ export const generateToken = (user: {
   if (user.doctor_id != null) {
     payload.doctor_id = user.doctor_id;
   }
-  return jwt.sign(payload, SECRET_KEY, { expiresIn: "24h" });
+  return jwt.sign(payload, SECRET_KEY, { expiresIn: "15h" });
 };
 
 export const verifyToken = (

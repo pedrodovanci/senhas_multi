@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useSocket } from "../contexts/SocketContext";
 import { useSearchParams } from "react-router-dom";
 import type { Ticket, DoctorCallingPayload } from "../types";
@@ -99,11 +99,48 @@ const TVPanel: React.FC = () => {
     };
   }, []);
 
-  // Clock
+  const fetchState = useCallback(async () => {
+    const matchesFilter = (ticket: Ticket) => {
+      if (filterType && filterType !== "undefined" && ticket.type !== filterType) return false;
+      if (filterDoctor && filterDoctor !== "undefined" && ticket.doctor_id !== Number(filterDoctor)) return false;
+      return true;
+    };
+    try {
+      const histRes = await apiFetch(`/api/tickets/history?limit=7`);
+      const histData: Ticket[] = await histRes.json();
+      const filteredHistory = Array.isArray(histData) ? histData.filter(matchesFilter) : [];
+      setHistory(filteredHistory.slice(0, 7).map((ticket) => toHistoryEntry({ kind: "guiche", ticket })));
+
+      const callingRes = await apiFetch(`/api/tickets?status=calling`);
+      const callingData: Ticket[] = await callingRes.json();
+      const filteredCalling = Array.isArray(callingData) ? callingData.filter(matchesFilter) : [];
+
+      if (filteredCalling.length > 0) {
+        setCurrentCall({ kind: "guiche", ticket: filteredCalling[0] });
+      } else if (filteredHistory.length > 0) {
+        setCurrentCall({ kind: "guiche", ticket: filteredHistory[0] });
+      } else {
+        setCurrentCall(null);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, [filterType, filterDoctor]);
+
+  // Clock — detecta virada de dia e reseta o histórico re-buscando da API
   useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    let lastDateStr = new Date().toLocaleDateString("pt-BR");
+    const timer = setInterval(() => {
+      const now = new Date();
+      setCurrentTime(now);
+      const dateStr = now.toLocaleDateString("pt-BR");
+      if (dateStr !== lastDateStr) {
+        lastDateStr = dateStr;
+        fetchState();
+      }
+    }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [fetchState]);
 
   // Initialize audio and fetch initial state
   useEffect(() => {
@@ -115,58 +152,8 @@ const TVPanel: React.FC = () => {
     });
     audioRef.current = audio;
 
-    const matchesFilter = (ticket: Ticket) => {
-      if (
-        filterType &&
-        filterType !== "undefined" &&
-        ticket.type !== filterType
-      ) {
-        return false;
-      }
-      if (
-        filterDoctor &&
-        filterDoctor !== "undefined" &&
-        ticket.doctor_id !== Number(filterDoctor)
-      ) {
-        return false;
-      }
-      return true;
-    };
-
-    const fetchState = async () => {
-      try {
-        const histRes = await apiFetch(`/api/tickets/history?limit=7`);
-        const histData: Ticket[] = await histRes.json();
-
-        const filteredHistory = Array.isArray(histData)
-          ? histData.filter(matchesFilter)
-          : [];
-        setHistory(
-          filteredHistory
-            .slice(0, 7)
-            .map((ticket) => toHistoryEntry({ kind: "guiche", ticket })),
-        );
-
-        const callingRes = await apiFetch(`/api/tickets?status=calling`);
-        const callingData: Ticket[] = await callingRes.json();
-        const filteredCalling = Array.isArray(callingData)
-          ? callingData.filter(matchesFilter)
-          : [];
-
-        if (filteredCalling.length > 0) {
-          setCurrentCall({ kind: "guiche", ticket: filteredCalling[0] });
-        } else if (filteredHistory.length > 0) {
-          setCurrentCall({ kind: "guiche", ticket: filteredHistory[0] });
-        } else {
-          setCurrentCall(null);
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    };
-
     fetchState();
-  }, [filterType, filterDoctor]);
+  }, [fetchState]);
 
   useEffect(() => {
     if (socketContext && socketContext.socket) {
@@ -196,51 +183,7 @@ const TVPanel: React.FC = () => {
       socketContext.on("ticket:calling", handleCalling);
       socketContext.on("doctor:calling", handleDoctorCalling);
 
-      const handleReconnected = () => {
-        Promise.all([
-          apiFetch(`/api/tickets/history?limit=7`).then((r) => r.json()),
-          apiFetch(`/api/tickets?status=calling`).then((r) => r.json()),
-        ])
-          .then(([hist, calling]) => {
-            const matchesFilter = (ticket: Ticket) => {
-              if (
-                filterType &&
-                filterType !== "undefined" &&
-                ticket.type !== filterType
-              ) {
-                return false;
-              }
-              if (
-                filterDoctor &&
-                filterDoctor !== "undefined" &&
-                ticket.doctor_id !== Number(filterDoctor)
-              ) {
-                return false;
-              }
-              return true;
-            };
-
-            const histData: Ticket[] = Array.isArray(hist)
-              ? hist.filter(matchesFilter)
-              : [];
-            const callingData: Ticket[] = Array.isArray(calling)
-              ? calling.filter(matchesFilter)
-              : [];
-            setHistory(
-              histData
-                .slice(0, 7)
-                .map((ticket) => toHistoryEntry({ kind: "guiche", ticket })),
-            );
-            if (callingData.length > 0) {
-              setCurrentCall({ kind: "guiche", ticket: callingData[0] });
-            } else if (histData.length > 0) {
-              setCurrentCall({ kind: "guiche", ticket: histData[0] });
-            } else {
-              setCurrentCall(null);
-            }
-          })
-          .catch(() => {});
-      };
+      const handleReconnected = () => { fetchState(); };
       socketContext.on("ws:reconnected", handleReconnected);
 
       return () => {
@@ -249,7 +192,7 @@ const TVPanel: React.FC = () => {
         socketContext.off("ws:reconnected", handleReconnected);
       };
     }
-  }, [socketContext, filterType, filterDoctor]);
+  }, [socketContext, fetchState, filterType, filterDoctor]);
 
   const unlockAudio = () => {
     if (audioRef.current) {
